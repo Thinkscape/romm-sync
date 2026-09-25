@@ -4,15 +4,15 @@ import android.os.Build
 import android.util.Log
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import es.davidrg.rommsync.data.local.dao.RomDao
-import es.davidrg.rommsync.data.remote.NetworkModule
-import es.davidrg.rommsync.data.remote.RomMApiService
-import es.davidrg.rommsync.data.remote.dto.ClientSaveState
-import es.davidrg.rommsync.data.remote.dto.DeviceRegistrationRequest
-import es.davidrg.rommsync.data.remote.dto.NegotiateRequest
-import es.davidrg.rommsync.data.remote.dto.SessionCompleteRequest
-import es.davidrg.rommsync.data.sync.platform.LocalSave
-import es.davidrg.rommsync.data.sync.platform.SaveHandler
-import es.davidrg.rommsync.data.sync.platform.SaveHandlerRegistry
+import es.davidrg.rommsync.core.remote.NetworkModule
+import es.davidrg.rommsync.core.remote.RomMApiService
+import es.davidrg.rommsync.core.remote.dto.ClientSaveState
+import es.davidrg.rommsync.core.remote.dto.DeviceRegistrationRequest
+import es.davidrg.rommsync.core.remote.dto.NegotiateRequest
+import es.davidrg.rommsync.core.remote.dto.SessionCompleteRequest
+import es.davidrg.rommsync.core.sync.platform.LocalSave
+import es.davidrg.rommsync.core.sync.platform.SaveHandler
+import es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -143,7 +143,7 @@ class SyncCoordinator(
         var failed = 0
         val failedRomIds = mutableSetOf<Int>()
         val failures = mutableListOf<FailedOpInfo>()
-        val conflicts = mutableListOf<es.davidrg.rommsync.data.remote.dto.SyncOperation>()
+        val conflicts = mutableListOf<es.davidrg.rommsync.core.remote.dto.SyncOperation>()
 
         for (op in negotiateResponse.operations) {
             when (op.action) {
@@ -185,12 +185,13 @@ class SyncCoordinator(
                 "download" -> {
                     val rom = downloadedRoms.find { it.romId == op.romId }
                     val handler = handlerByRom[op.romId]
-                    if (rom != null && op.saveId != null && handler != null) {
+                    val opSaveId = op.saveId
+                    if (rom != null && opSaveId != null && handler != null) {
                         val config = platformConfigs[rom.platformSlug]
                         val effectiveBasePath = resolveSavesBasePath(rom, config, retroArchBase)
                         val ok = executeDownload(
                             api = api,
-                            saveId = op.saveId,
+                            saveId = opSaveId,
                             deviceId = deviceId,
                             rom = rom,
                             fileName = op.fileName,
