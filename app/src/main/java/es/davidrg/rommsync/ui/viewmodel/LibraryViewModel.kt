@@ -2,6 +2,7 @@ package es.davidrg.rommsync.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.repository.RomRepository
 import es.davidrg.rommsync.domain.model.ApiResult
 import es.davidrg.rommsync.domain.model.DownloadStatus
@@ -253,7 +254,7 @@ class LibraryViewModel(
             if (anyOk) {
                 _events.emit(LibraryEvent.DownloadDeleted(rom.name))
             } else {
-                _events.emit(LibraryEvent.Error("No se pudo borrar el archivo de ${rom.name}"))
+                _events.emit(LibraryEvent.Error(tr("android.library.delete_failed", rom.name)))
             }
         }
     }
@@ -280,11 +281,11 @@ class LibraryViewModel(
                 is es.davidrg.rommsync.data.repository.MoveResult.Success ->
                     _events.emit(LibraryEvent.RomMoved(rom.name, result.target.absolutePath))
                 es.davidrg.rommsync.data.repository.MoveResult.NotDownloaded ->
-                    _events.emit(LibraryEvent.Error("${rom.name} no consta como descargado"))
+                    _events.emit(LibraryEvent.Error(tr("android.library.move_not_downloaded", rom.name)))
                 es.davidrg.rommsync.data.repository.MoveResult.SourceMissing ->
-                    _events.emit(LibraryEvent.Error("No se encontró el archivo de ${rom.name} en disco"))
+                    _events.emit(LibraryEvent.Error(tr("android.library.move_source_missing", rom.name)))
                 is es.davidrg.rommsync.data.repository.MoveResult.Error ->
-                    _events.emit(LibraryEvent.Error("Mover ${rom.name}: ${result.message}"))
+                    _events.emit(LibraryEvent.Error(tr("android.library.move_error", rom.name, result.message)))
             }
         }
     }
@@ -297,14 +298,14 @@ class LibraryViewModel(
      */
     fun enqueueBatchDownload(roms: List<Rom>, serverUrl: String, romsRootPath: String? = null) {
         val manager = downloadManager ?: run {
-            viewModelScope.launch { _events.emit(LibraryEvent.Error("DownloadManager no disponible")) }
+            viewModelScope.launch { _events.emit(LibraryEvent.Error(tr("android.library.download_manager_unavailable"))) }
             return
         }
         // Skip ROMs that are already enqueued/running to avoid duplicate work.
         val currentlyDownloading = activeDownloads.value
         val toEnqueue = roms.filter { it.id !in currentlyDownloading }
         if (toEnqueue.isEmpty()) {
-            viewModelScope.launch { _events.emit(LibraryEvent.Error("No hay ROMs nuevos para descargar")) }
+            viewModelScope.launch { _events.emit(LibraryEvent.Error(tr("android.library.no_new_roms"))) }
             return
         }
         viewModelScope.launch {
@@ -375,11 +376,11 @@ class LibraryViewModel(
  * Maps [ErrorKind] to user-facing Spanish messages.
  */
 private fun ErrorKind.toUserMessage(): String = when (this) {
-    ErrorKind.NETWORK -> "Sin conexión al servidor"
-    ErrorKind.AUTH -> "API Key inválida o sin permisos"
-    ErrorKind.NOT_FOUND -> "No encontrado"
-    ErrorKind.SERVER -> "Error del servidor (500)"
-    ErrorKind.UNKNOWN -> "Error desconocido"
+    ErrorKind.NETWORK -> tr("android.library.error_network")
+    ErrorKind.AUTH -> tr("android.library.error_auth")
+    ErrorKind.NOT_FOUND -> tr("android.library.error_not_found")
+    ErrorKind.SERVER -> tr("android.library.error_server")
+    ErrorKind.UNKNOWN -> tr("android.library.error_unknown")
 }
 
 /** One-shot UI events emitted by the ViewModel. */
@@ -393,13 +394,13 @@ sealed class LibraryEvent {
 }
 
 /** Criterios de ordenación de la biblioteca (paridad con el desktop). */
-enum class RomSort(val label: String) {
-    NAME_ASC("Nombre A-Z"),
-    NAME_DESC("Nombre Z-A"),
-    SIZE_DESC("Tamaño ↓"),
-    SIZE_ASC("Tamaño ↑"),
-    YEAR_DESC("Año ↓"),
-    YEAR_ASC("Año ↑"),
-    RATING_DESC("Rating ↓"),
-    RATING_ASC("Rating ↑"),
+enum class RomSort(val labelKey: String) {
+    NAME_ASC("state.library_sort.name_asc"),
+    NAME_DESC("state.library_sort.name_desc"),
+    SIZE_DESC("state.library_sort.size_desc"),
+    SIZE_ASC("state.library_sort.size_asc"),
+    YEAR_DESC("state.library_sort.year_desc"),
+    YEAR_ASC("state.library_sort.year_asc"),
+    RATING_DESC("state.library_sort.rating_desc"),
+    RATING_ASC("state.library_sort.rating_asc"),
 }

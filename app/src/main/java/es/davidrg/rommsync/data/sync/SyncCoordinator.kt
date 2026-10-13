@@ -4,6 +4,7 @@ import android.os.Build
 import android.util.Log
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import es.davidrg.rommsync.data.local.dao.RomDao
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.ClientSaveState
@@ -77,24 +78,24 @@ class SyncCoordinator(
         val retroArchBase = settingsDataStore.getRetroArchBasePathBlocking()
 
         if (serverUrl.isEmpty() || apiKey.isEmpty()) {
-            return@withContext SyncResult(error = "Servidor no configurado")
+            return@withContext SyncResult(error = tr("common.server_not_configured"))
         }
 
         val api = NetworkModule.createApiService(serverUrl, apiKey)
 
         // 1. Asegurar registro del dispositivo
         val deviceId = ensureDeviceRegistered(api)
-            ?: return@withContext SyncResult(error = "No se pudo registrar el dispositivo. Comprueba permisos y conexión.")
+            ?: return@withContext SyncResult(error = tr("sync.error.device_registration_detail"))
 
         // 2. Escanear saves locales de ROMs descargados
         val allDownloadedRoms = romDao.getAllDownloadedRomsBlocking()
         if (allDownloadedRoms.isEmpty()) {
-            return@withContext SyncResult(message = "No hay ROMs descargados para sincronizar")
+            return@withContext SyncResult(message = tr("sync.no_downloaded_roms"))
         }
 
         val downloadedRoms = allDownloadedRoms.filterNot { it.excludedFromSync }
         if (downloadedRoms.isEmpty()) {
-            return@withContext SyncResult(message = "Todos los ROMs están excluidos de la sincronización")
+            return@withContext SyncResult(message = tr("sync.all_excluded"))
         }
 
         val platformConfigs = platformDao.getAllPlatformsBlocking().associateBy { it.slug }
@@ -179,7 +180,7 @@ class SyncCoordinator(
             api.negotiateSync(negotiateRequest)
         } catch (e: Exception) {
             Log.w(TAG, "Negotiate failed", e)
-            return@withContext SyncResult(error = "Error en negociación: ${e.message}")
+            return@withContext SyncResult(error = tr("sync.error.negotiation", e.message))
         }
 
         // 4. Ejecutar operaciones
@@ -206,10 +207,10 @@ class SyncCoordinator(
                             failures.add(
                                 FailedOpInfo(
                                     romId = op.romId,
-                                    romName = downloadedRoms.find { it.romId == op.romId }?.name ?: "rom ${op.romId}",
+                                    romName = downloadedRoms.find { it.romId == op.romId }?.name ?: tr("sync.unknown_rom", op.romId),
                                     fileName = op.fileName,
-                                    action = "subida",
-                                    reason = "No se pudo subir al servidor",
+                                    action = tr("sync.failed.action.upload"),
+                                    reason = tr("sync.failed.upload_failed"),
                                 ),
                             )
                         }
@@ -219,10 +220,10 @@ class SyncCoordinator(
                         failures.add(
                             FailedOpInfo(
                                 romId = op.romId,
-                                romName = downloadedRoms.find { it.romId == op.romId }?.name ?: "rom ${op.romId}",
+                                romName = downloadedRoms.find { it.romId == op.romId }?.name ?: tr("sync.unknown_rom", op.romId),
                                 fileName = op.fileName,
-                                action = "subida",
-                                reason = "El save desapareció del disco antes de subirlo",
+                                action = tr("sync.failed.action.upload"),
+                                reason = tr("sync.failed.save_missing"),
                             ),
                         )
                     }
@@ -260,10 +261,10 @@ class SyncCoordinator(
                             failures.add(
                                 FailedOpInfo(
                                     romId = op.romId,
-                                    romName = downloadedRoms.find { it.romId == op.romId }?.name ?: "rom ${op.romId}",
+                                    romName = downloadedRoms.find { it.romId == op.romId }?.name ?: tr("sync.unknown_rom", op.romId),
                                     fileName = op.fileName,
-                                    action = "descarga",
-                                    reason = "Fallo al descargar o extraer en disco",
+                                    action = tr("sync.failed.action.download"),
+                                    reason = tr("sync.failed.download_failed"),
                                 ),
                             )
                         }
@@ -273,10 +274,10 @@ class SyncCoordinator(
                         failures.add(
                             FailedOpInfo(
                                 romId = op.romId,
-                                romName = downloadedRoms.find { it.romId == op.romId }?.name ?: "rom ${op.romId}",
+                                romName = downloadedRoms.find { it.romId == op.romId }?.name ?: tr("sync.unknown_rom", op.romId),
                                 fileName = op.fileName,
-                                action = "descarga",
-                                reason = "El ROM ya no está descargado en este dispositivo",
+                                action = tr("sync.failed.action.download"),
+                                reason = tr("sync.failed.rom_not_downloaded"),
                             ),
                         )
                     }
@@ -373,7 +374,7 @@ class SyncCoordinator(
             conflictDetails = conflicts.map { op ->
                 ConflictInfo(
                     romId = op.romId,
-                    romName = downloadedRoms.find { it.romId == op.romId }?.name ?: "rom ${op.romId}",
+                    romName = downloadedRoms.find { it.romId == op.romId }?.name ?: tr("sync.unknown_rom", op.romId),
                     fileName = op.fileName,
                     serverUpdatedAt = op.serverUpdatedAt,
                     reason = op.reason,
@@ -382,6 +383,11 @@ class SyncCoordinator(
             },
             failedDetails = failures,
             message = buildResultMessage(completed, failed, conflicts.size, pathWarnings),
+            // Señales explícitas para la UI: el estado no debe deducirse
+            // leyendo el texto del mensaje (que es traducible).
+            allSynced = completed == 0 && failed == 0 &&
+                conflicts.isEmpty() && pathWarnings.isEmpty(),
+            hasWarnings = pathWarnings.isNotEmpty(),
         )
     }
 
@@ -411,15 +417,15 @@ class SyncCoordinator(
         val retroArchBase = settingsDataStore.getRetroArchBasePathBlocking()
 
         if (serverUrl.isEmpty() || apiKey.isEmpty()) {
-            return@withContext SyncResult(error = "Servidor no configurado")
+            return@withContext SyncResult(error = tr("common.server_not_configured"))
         }
 
         val api = NetworkModule.createApiService(serverUrl, apiKey)
         val deviceId = ensureDeviceRegistered(api)
-            ?: return@withContext SyncResult(error = "No se pudo registrar el dispositivo")
+            ?: return@withContext SyncResult(error = tr("sync.error.device_registration"))
 
         val rom = romDao.getAllDownloadedRomsBlocking().find { it.romId == romId }
-            ?: return@withContext SyncResult(error = "ROM $romId no está descargado en este dispositivo")
+            ?: return@withContext SyncResult(error = tr("sync.error.rom_not_downloaded", romId))
 
         val config = platformDao.getAllPlatformsBlocking().find { it.slug == rom.platformSlug }
         val handler = SaveHandlerRegistry.getHandler(
@@ -439,14 +445,14 @@ class SyncCoordinator(
                     romLocalPath = rom.localPath,
                 )
                 val save = saves.find { it.fileName == fileName }
-                    ?: return@withContext SyncResult(error = "No se encontró el save local $fileName")
+                    ?: return@withContext SyncResult(error = tr("sync.error.local_save_not_found", fileName))
 
                 val ok = executeUpload(api, save, rom.romId, deviceId, handler)
                 if (ok) {
                     syncedHashStore?.setSyncedHash(rom.romId, save.fileName, save.sha1)
-                    SyncResult(uploaded = 1, message = "Versión local subida: $fileName")
+                    SyncResult(uploaded = 1, message = tr("sync.conflict.local_uploaded", fileName))
                 } else {
-                    SyncResult(error = "Fallo al subir $fileName")
+                    SyncResult(error = tr("sync.error.upload_failed", fileName))
                 }
             }
             "server" -> {
@@ -470,17 +476,17 @@ class SyncCoordinator(
                 val negotiateResponse = try {
                     api.negotiateSync(NegotiateRequest(deviceId = deviceId, saves = clientSaves))
                 } catch (e: Exception) {
-                    return@withContext SyncResult(error = "Error en negociación: ${e.message}")
+                    return@withContext SyncResult(error = tr("sync.error.negotiation", e.message))
                 }
 
                 val op = negotiateResponse.operations.find {
                     it.romId == rom.romId && it.fileName == fileName
                 } ?: return@withContext SyncResult(
-                    error = "El servidor ya no reporta operaciones para $fileName",
+                    error = tr("sync.error.no_server_operation", fileName),
                 )
 
                 val saveId = op.saveId
-                    ?: return@withContext SyncResult(error = "El servidor no devolvió saveId para $fileName")
+                    ?: return@withContext SyncResult(error = tr("sync.error.no_save_id", fileName))
 
                 // Copia de seguridad de la copia local antes de pisarla
                 backupLocalSave(rom.romId, fileName, localSaves, handler)
@@ -505,12 +511,12 @@ class SyncCoordinator(
                             request = SessionCompleteRequest(operationsCompleted = 1),
                         )
                     } catch (_: Exception) {}
-                    SyncResult(downloaded = 1, message = "Versión del servidor restaurada: $fileName")
+                    SyncResult(downloaded = 1, message = tr("sync.conflict.server_restored", fileName))
                 } else {
-                    SyncResult(error = "Fallo al descargar $fileName")
+                    SyncResult(error = tr("sync.error.download_failed", fileName))
                 }
             }
-            else -> SyncResult(error = "Resolución desconocida: $resolution")
+            else -> SyncResult(error = tr("sync.error.unknown_resolution", resolution))
         }.also { cleanupStaged() }
     }
 
@@ -658,15 +664,19 @@ class SyncCoordinator(
         pathWarnings: List<String> = emptyList(),
     ): String {
         val parts = mutableListOf<String>()
-        if (completed > 0) parts.add("$completed completadas")
-        if (failed > 0) parts.add("$failed fallidas")
-        if (conflicts > 0) parts.add("$conflicts conflictos")
+        if (completed > 0) parts.add(tr("sync.result.completed", completed))
+        if (failed > 0) parts.add(tr("sync.result.failed", failed))
+        if (conflicts > 0) parts.add(tr("sync.result.conflicts", conflicts))
         if (pathWarnings.isNotEmpty()) {
             val shown = pathWarnings.take(3).joinToString(", ") +
-                if (pathWarnings.size > 3) " (+${pathWarnings.size - 3} más)" else ""
-            parts.add("⚠ ${pathWarnings.size} ruta(s) configurada(s) ilegible(s): $shown")
+                if (pathWarnings.size > 3) {
+                    " " + tr("android.sync.result.more_paths", pathWarnings.size - 3)
+                } else {
+                    ""
+                }
+            parts.add(tr("android.sync.result.path_warnings", pathWarnings.size, shown))
         }
-        return if (parts.isEmpty()) "Todo sincronizado" else parts.joinToString(" · ")
+        return if (parts.isEmpty()) tr("sync.result.all_synced") else parts.joinToString(" · ")
     }
     companion object {
         private const val TAG = "SyncCoordinator"
@@ -691,6 +701,10 @@ data class SyncResult(
     val failedDetails: List<FailedOpInfo> = emptyList(),
     val message: String? = null,
     val error: String? = null,
+    /** No hubo nada que hacer (ni subidas, ni bajadas, ni fallos ni avisos). */
+    val allSynced: Boolean = false,
+    /** El resultado trae avisos (p. ej. rutas de saves configuradas ilegibles). */
+    val hasWarnings: Boolean = false,
 ) {
     val isSuccess: Boolean get() = error == null
 }

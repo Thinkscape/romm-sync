@@ -1,15 +1,23 @@
 package es.davidrg.rommsync.domain.model
 
+import es.davidrg.rommsync.core.i18n.tr
+
 /** Destino de descarga por defecto de una plataforma (modo dos rutas). */
-enum class PlatformDownloadStorage(val label: String) {
+enum class PlatformDownloadStorage(val id: String) {
     /** Preguntar al usuario en cada descarga. */
-    ASK("Preguntar"),
+    ASK("ask"),
 
     /** Memoria interna (ruta principal configurada). */
-    INTERNAL("Interna"),
+    INTERNAL("internal"),
 
     /** Tarjeta SD (segunda ruta configurada). */
-    SD("Tarjeta SD");
+    SD("sd");
+
+    /**
+     * Etiqueta para la UI: se traduce en el momento de leerla
+     * (`android.storage.ask` / `.internal` / `.sd`).
+     */
+    val label: String get() = tr("android.storage.$id")
 
     companion object {
         fun fromRaw(raw: String?): PlatformDownloadStorage? = when (raw) {

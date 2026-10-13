@@ -2,6 +2,7 @@ package es.davidrg.rommsync.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import es.davidrg.rommsync.data.local.dao.PlatformDao
 import es.davidrg.rommsync.data.local.dao.RomDao
@@ -213,7 +214,7 @@ class SyncViewModel(
                         effectiveBasePath.contains("/Android/obb") ||
                         effectiveBasePath.contains("/data/data")
                     val hint = if (restricted) {
-                        " — sin root, usa «Otorgar acceso» en el selector de carpetas"
+                        " — " + tr("android.sync.path_warnings.no_root")
                     } else ""
                     warnings.add("${rom.name}: $effectiveBasePath$hint")
                 }

@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.sync.SafTreeStore
 import es.davidrg.rommsync.util.hasAllFilesAccess
 import java.io.File
@@ -129,7 +130,7 @@ fun FolderPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Seleccionar carpeta") },
+        title = { Text(tr("common.select_folder")) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
@@ -159,8 +160,7 @@ fun FolderPickerDialog(
                             )
                             Spacer(modifier = Modifier.size(8.dp))
                             Text(
-                                "Sin permiso «Acceso a todos los archivos»: " +
-                                    "Android/data puede aparecer vacío o ilegible.",
+                                tr("android.folder.no_all_files_permission"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.weight(1f),
@@ -174,7 +174,7 @@ fun FolderPickerDialog(
                                         ),
                                     )
                                 },
-                            ) { Text("Conceder") }
+                            ) { Text(tr("android.folder.grant")) }
                         }
                     }
                 }
@@ -190,9 +190,7 @@ fun FolderPickerDialog(
                             }
                             if (granted) {
                                 Text(
-                                    "Acceso concedido vía selector del sistema: el sync " +
-                                        "lee y escribe esta carpeta aunque la lista esté " +
-                                        "vacía. Pulsa «Usar esta carpeta».",
+                                    tr("android.folder.saf_granted"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(vertical = 12.dp),
@@ -203,12 +201,9 @@ fun FolderPickerDialog(
                                         (currentDir.path.contains("/Android/data") ||
                                             currentDir.path.contains("/Android/obb"))
                                     ) {
-                                        "Android bloquea Android/data incluso con «Todos " +
-                                            "los archivos». Otórgalo con el selector del " +
-                                            "sistema (como hace ZArchiver)."
+                                        tr("android.folder.android_data_blocked")
                                     } else {
-                                        "No se pudo leer esta carpeta. Comprueba el permiso " +
-                                            "«Acceso a todos los archivos» en Ajustes."
+                                        tr("android.folder.unreadable")
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
@@ -221,7 +216,7 @@ fun FolderPickerDialog(
                                             SafTreeStore.initialTreeUri(currentDir.path),
                                         )
                                     },
-                                ) { Text("Otorgar acceso") }
+                                ) { Text(tr("android.folder.grant_access")) }
                             }
                         }
                     }
@@ -255,7 +250,7 @@ fun FolderPickerDialog(
                     if (listing != null && subDirs.isEmpty() && files.isEmpty()) {
                         item {
                             Text(
-                                "Carpeta vacía",
+                                tr("android.folder.empty"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(vertical = 12.dp),
@@ -267,12 +262,12 @@ fun FolderPickerDialog(
         },
         confirmButton = {
             TextButton(onClick = { onSelect(currentDir.path) }) {
-                Text("Usar esta carpeta")
+                Text(tr("android.folder.use_this_folder"))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancelar")
+                Text(tr("common.cancel"))
             }
         },
     )

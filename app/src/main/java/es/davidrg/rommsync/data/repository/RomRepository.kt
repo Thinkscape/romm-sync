@@ -14,6 +14,7 @@ import es.davidrg.rommsync.domain.model.Platform
 import es.davidrg.rommsync.domain.model.Rom
 import es.davidrg.rommsync.domain.model.RomFile
 import es.davidrg.rommsync.core.download.PathMapper
+import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -258,7 +259,7 @@ class RomRepository(
 
             val targetDir = PathMapper.getPlatformDir(targetRoot, entity.platformSlug)
             if (!targetDir.exists() && !targetDir.mkdirs()) {
-                return@withContext MoveResult.Error("No se pudo crear la carpeta destino: $targetDir")
+                return@withContext MoveResult.Error(tr("android.repository.move_create_dir_failed", targetDir))
             }
             val target = File(targetDir, source.name)
 
@@ -281,7 +282,7 @@ class RomRepository(
                 val gb = mb / 1000.0
                 val human = if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
                     else String.format(java.util.Locale.US, "%.0f MB", mb)
-                return@withContext MoveResult.Error("Espacio insuficiente en el destino (faltan $human)")
+                return@withContext MoveResult.Error(tr("android.repository.move_no_space", human))
             }
 
             // Copiar archivo o árbol completo con progreso (buffer 64KB;
@@ -291,7 +292,7 @@ class RomRepository(
             } catch (e: Exception) {
                 // Copia fallida: limpiar el parcial destino y conservar el origen.
                 runCatching { target.deleteRecursively() }
-                return@withContext MoveResult.Error("Error al copiar: ${e.message ?: "E/S"}")
+                return@withContext MoveResult.Error(tr("android.repository.move_copy_failed", e.message ?: tr("android.repository.io_error")))
             } finally {
                 onProgress(size, size)
             }
@@ -307,14 +308,14 @@ class RomRepository(
             val (dstFiles, dstBytes) = treeStats(target)
             if (srcFiles != dstFiles || srcBytes != dstBytes) {
                 runCatching { target.deleteRecursively() }
-                return@withContext MoveResult.Error("La copia no coincide con el original; se ha conservado el original")
+                return@withContext MoveResult.Error(tr("android.repository.move_verify_mismatch"))
             }
 
             // Copia íntegra: eliminar origen y actualizar la ruta registrada.
             if (!source.deleteRecursively()) {
                 // Origen no borrado: revertir para no duplicar (el original manda).
                 runCatching { target.deleteRecursively() }
-                return@withContext MoveResult.Error("No se pudo eliminar el original tras copiar")
+                return@withContext MoveResult.Error(tr("android.repository.move_delete_failed"))
             }
             romDao.updateLocalPath(romId, target.absolutePath)
             MoveResult.Success(target)
@@ -385,7 +386,7 @@ class RomRepository(
     ): ScanResult = withContext(Dispatchers.IO) {
         val platforms = platformDao.getAllPlatformsBlocking()
         if (platforms.isEmpty()) {
-            return@withContext ScanResult(error = "No hay plataformas. Sincroniza el servidor primero.")
+            return@withContext ScanResult(error = tr("android.repository.scan_no_platforms"))
         }
 
         val roots = romsRootPaths.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
@@ -431,7 +432,7 @@ class RomRepository(
             }
             ScanResult(detected = detected, scanned = scanned)
         } catch (e: Exception) {
-            ScanResult(detected = detected, scanned = scanned, error = e.message ?: "Error durante el escaneo")
+            ScanResult(detected = detected, scanned = scanned, error = e.message ?: tr("android.repository.scan_error"))
         }
     }
 

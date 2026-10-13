@@ -58,6 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import es.davidrg.rommsync.RomMSyncApplication
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import es.davidrg.rommsync.data.sync.ConflictInfo
 import es.davidrg.rommsync.data.sync.FailedOpInfo
@@ -126,7 +127,7 @@ fun SyncScreen() {
                 container.settingsRepository.setLastSync(System.currentTimeMillis(), s.message)
             }
             is SyncState.Failed -> {
-                container.settingsRepository.setLastSync(System.currentTimeMillis(), "Error: ${s.message}")
+                container.settingsRepository.setLastSync(System.currentTimeMillis(), tr("common.error_detail", s.message))
             }
             else -> {}
         }
@@ -135,7 +136,7 @@ fun SyncScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Sincronización") },
+                title = { Text(tr("android.sync.title")) },
                 modifier = Modifier.height(if (compact) 48.dp else 64.dp),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -193,18 +194,19 @@ fun SyncScreen() {
                         )
                         Spacer(modifier = Modifier.size(10.dp))
                         Text(
-                            if (syncState is SyncState.Pending) "En cola..." else "Sincronizando...",
+                            if (syncState is SyncState.Pending) tr("android.sync.button.pending")
+                            else tr("saves.sync_button.syncing"),
                         )
                     } else {
                         Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.size(8.dp))
-                        Text("Sincronizar ahora")
+                        Text(tr("saves.sync_button.sync_now"))
                     }
                 }
 
                 if (!settings.isConfigured) {
                     Text(
-                        "Configura el servidor RomM antes de sincronizar.",
+                        tr("android.sync.not_configured"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(top = 4.dp),
@@ -216,7 +218,7 @@ fun SyncScreen() {
             item {
                 SyncSection(
                     icon = Icons.Outlined.Storage,
-                    title = "Ruta base RetroArch",
+                    title = tr("android.sync.retroarch_base.title"),
                 ) {
                     OutlinedTextField(
                         value = retroArchPath,
@@ -224,7 +226,7 @@ fun SyncScreen() {
                             retroArchPath = it
                             viewModel.setRetroArchBasePath(it)
                         },
-                        label = { Text("Ruta base") },
+                        label = { Text(tr("android.sync.retroarch_base.label")) },
                         placeholder = { Text("/storage/emulated/0/RetroArch") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -241,12 +243,11 @@ fun SyncScreen() {
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Seleccionar carpeta")
+                        Text(tr("common.select_folder"))
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Se usa como base para plataformas asignadas a RetroArch. " +
-                            "Puedes personalizar la ruta de cada plataforma en su configuración.",
+                        tr("android.sync.retroarch_base.hint"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -257,11 +258,11 @@ fun SyncScreen() {
             item {
                 SyncSection(
                     icon = Icons.Outlined.Schedule,
-                    title = "Sincronización automática",
+                    title = tr("saves.auto_sync.title"),
                 ) {
                     Text(
-                        if (syncInterval > 0) "Cada $syncInterval minutos"
-                        else "Desactivada",
+                        if (syncInterval > 0) tr("saves.auto_sync.every_minutes", syncInterval)
+                        else tr("saves.auto_sync.disabled"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -271,7 +272,7 @@ fun SyncScreen() {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         val options = listOf(0, 15, 30, 60, 120)
-                        val labels = listOf("Off", "15m", "30m", "1h", "2h")
+                        val labels = listOf(tr("saves.auto_sync.off_chip"), "15m", "30m", "1h", "2h")
                         options.forEachIndexed { index, minutes ->
                             FilterChip(
                                 selected = syncInterval == minutes,
@@ -282,8 +283,7 @@ fun SyncScreen() {
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Requiere conexión a internet. La sincronización se ejecuta en segundo plano " +
-                            "incluso con la app cerrada.",
+                        tr("android.sync.auto_sync.hint"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -299,14 +299,13 @@ fun SyncScreen() {
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(
-                                    "Optimización de batería activa",
+                                    tr("android.sync.battery.title"),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "El sistema puede impedir la sincronización en segundo plano. " +
-                                        "Desactiva la optimización de batería para que funcione de forma fiable.",
+                                    tr("android.sync.battery.message"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                 )
@@ -314,7 +313,7 @@ fun SyncScreen() {
                                 FilledTonalButton(
                                     onClick = { requestIgnoreBatteryOptimizations(context) },
                                 ) {
-                                    Text("Desactivar restricción")
+                                    Text(tr("android.sync.battery.disable"))
                                 }
                             }
                         }
@@ -326,7 +325,7 @@ fun SyncScreen() {
             item {
                 SyncSection(
                     icon = Icons.Outlined.Info,
-                    title = "Cambios pendientes",
+                    title = tr("saves.pending.title"),
                 ) {
                     if (isScanning) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -336,7 +335,7 @@ fun SyncScreen() {
                             )
                             Spacer(modifier = Modifier.size(8.dp))
                             Text(
-                                "Comprobando saves...",
+                                tr("android.sync.pending.checking"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -344,7 +343,7 @@ fun SyncScreen() {
                     } else if (localSaves.isEmpty()) {
                         if (scanChecked < 0) {
                             Text(
-                                "Pulsa comprobar para ver si hay saves con cambios no sincronizados.",
+                                tr("android.sync.pending.prompt"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -352,33 +351,36 @@ fun SyncScreen() {
                             // Escaneo corrido sin resultados: decirlo explícitamente —
                             // repetir "Pulsa comprobar…" parecía que no había corrido.
                             Text(
-                                "Sin cambios pendientes · " +
-                                    "$scanChecked juego${if (scanChecked != 1) "s" else ""} " +
-                                    "comprobado${if (scanChecked != 1) "s" else ""}",
+                                if (scanChecked == 1) {
+                                    tr("android.sync.pending.none_one", scanChecked)
+                                } else {
+                                    tr("android.sync.pending.none_many", scanChecked)
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "Si acabas de guardar dentro del juego, cierra el contenido " +
-                                    "en el emulador: hasta que escribe el save a disco no hay " +
-                                    "cambios que sincronizar.",
+                                tr("android.sync.pending.empty_hint"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     } else {
                         Text(
-                            "${localSaves.size} save${if (localSaves.size != 1) "s" else ""} " +
-                                "con cambios pendientes",
+                            if (localSaves.size == 1) {
+                                tr("android.sync.pending.count_one", localSaves.size)
+                            } else {
+                                tr("android.sync.pending.count_many", localSaves.size)
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Se subirán al servidor en la próxima sincronización.",
+                            tr("android.sync.pending.upload_hint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -392,7 +394,7 @@ fun SyncScreen() {
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Text(
-                                    "⚠ Rutas configuradas que no se pueden leer:",
+                                    tr("android.sync.path_warnings.title"),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
@@ -407,8 +409,7 @@ fun SyncScreen() {
                                     )
                                 }
                                 Text(
-                                    "El sync no buscará partidas ahí. Revisa la ruta o " +
-                                        "el permiso «Acceso a todos los archivos».",
+                                    tr("android.sync.path_warnings.hint"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
                                 )
@@ -426,7 +427,7 @@ fun SyncScreen() {
                             modifier = Modifier.size(16.dp),
                         )
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Comprobar")
+                        Text(tr("android.sync.pending.check_button"))
                     }
                 }
             }
@@ -485,35 +486,35 @@ private fun StatusCard(
                 Quad(
                     Icons.Filled.CheckCircle,
                     MaterialTheme.colorScheme.secondary,
-                    "Última sincronización",
+                    tr("saves.status.last_sync"),
                     formatTimestamp(lastTimestamp),
                 )
             } else {
                 Quad(
                     Icons.Outlined.Sync,
                     MaterialTheme.colorScheme.onSurfaceVariant,
-                    "Sin sincronizar",
-                    "Pulsa el botón para sincronizar tus saves",
+                    tr("saves.status.never_synced"),
+                    tr("saves.status.never_synced_hint"),
                 )
             }
         }
         SyncState.Pending -> Quad(
             Icons.Filled.Sync,
             MaterialTheme.colorScheme.primary,
-            "En cola",
-            "Esperando conexión...",
+            tr("android.sync.status.queued"),
+            tr("android.sync.status.waiting"),
         )
         SyncState.Running -> Quad(
             Icons.Filled.Sync,
             MaterialTheme.colorScheme.primary,
-            "Sincronizando",
-            "Conectando con el servidor RomM...",
+            tr("saves.status.syncing"),
+            tr("saves.status.connecting"),
         )
-        is SyncState.Success -> parseSyncResult(syncState.message)
+        is SyncState.Success -> parseSyncResult(syncState.message, syncState.hasWarnings, syncState.allSynced)
         is SyncState.Failed -> Quad(
             Icons.Filled.Error,
             MaterialTheme.colorScheme.error,
-            "Error",
+            tr("common.error"),
             syncState.message,
         )
     }
@@ -564,7 +565,7 @@ private fun StatusCard(
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Resultado: ",
+                        tr("android.sync.result_label") + " ",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -671,15 +672,14 @@ private fun FailedOpsSection(failures: List<FailedOpInfo>) {
                 )
                 Spacer(modifier = Modifier.size(10.dp))
                 Text(
-                    "Fallidos (${failures.size})",
+                    tr("saves.failed.title", failures.size),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "Estos saves no se sincronizaron. Vuelve a intentarlo; si persiste, " +
-                    "revisa la ruta de saves y la conexión con el servidor.",
+                tr("android.sync.failed.hint"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
@@ -741,15 +741,14 @@ private fun ConflictSection(
                 )
                 Spacer(modifier = Modifier.size(10.dp))
                 Text(
-                    "Conflictos (${conflicts.size})",
+                    tr("saves.conflicts.title", conflicts.size),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "El mismo save cambió en este dispositivo y en el servidor. " +
-                    "Elige qué versión conservar:",
+                tr("android.sync.conflicts.description"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
@@ -785,8 +784,8 @@ private fun ConflictItemRow(
             buildString {
                 append(conflict.fileName)
                 conflict.serverUpdatedAt?.let {
-                    append("  ·  Servidor: ")
-                    append(formatServerTimestamp(it))
+                    append("  ·  ")
+                    append(tr("saves.conflicts.server_time", formatServerTimestamp(it)))
                 }
             },
             style = MaterialTheme.typography.bodySmall,
@@ -817,7 +816,7 @@ private fun ConflictItemRow(
                     )
                 }
                 Spacer(modifier = Modifier.size(6.dp))
-                Text("Local", maxLines = 1)
+                Text(tr("saves.conflicts.keep_local"), maxLines = 1)
             }
             FilledTonalButton(
                 onClick = { onResolve(conflict.romId, conflict.fileName, "server") },
@@ -830,7 +829,7 @@ private fun ConflictItemRow(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(modifier = Modifier.size(6.dp))
-                Text("Servidor", maxLines = 1)
+                Text(tr("saves.conflicts.keep_server"), maxLines = 1)
             }
         }
     }
@@ -845,27 +844,36 @@ private fun formatServerTimestamp(iso: String): String = try {
 } catch (_: Exception) {
     iso.take(16)
 }
+/**
+ * Estado visual del resultado del sync: se decide por las señales explícitas
+ * de SyncState.Success (avisos / nada que hacer), nunca leyendo el texto del
+ * mensaje, que es traducible y en otro idioma rompería el chequeo.
+ */
 @Composable
-private fun parseSyncResult(message: String): Quad<ImageVector, androidx.compose.ui.graphics.Color, String, String> {
-    return if (message.contains("⚠")) {
+private fun parseSyncResult(
+    message: String,
+    hasWarnings: Boolean,
+    allSynced: Boolean,
+): Quad<ImageVector, androidx.compose.ui.graphics.Color, String, String> {
+    return if (hasWarnings) {
         Quad(
             Icons.Filled.Warning,
             MaterialTheme.colorScheme.tertiary,
-            "Sincronizado con avisos",
+            tr("android.sync.status.warnings"),
             message,
         )
-    } else if (message.contains("Todo sincronizado", ignoreCase = true)) {
+    } else if (allSynced) {
         Quad(
             Icons.Filled.CheckCircle,
             MaterialTheme.colorScheme.secondary,
-            "Todo al día",
-            "No hay cambios pendientes",
+            tr("android.sync.status.all_synced"),
+            tr("android.sync.status.no_changes"),
         )
     } else {
         Quad(
             Icons.Filled.CheckCircle,
             MaterialTheme.colorScheme.secondary,
-            "Sincronización completada",
+            tr("android.sync.completed_title"),
             message,
         )
     }

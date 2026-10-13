@@ -3,6 +3,7 @@ package es.davidrg.rommsync.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import es.davidrg.rommsync.BuildConfig
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.local.ServerConfig
 import es.davidrg.rommsync.data.repository.RomRepository
 import es.davidrg.rommsync.data.repository.SettingsRepository
@@ -127,7 +128,7 @@ class ConfigViewModel(
         when (val result = helper.launchInstaller(ready.apkFile)) {
             is InstallLaunchResult.Started -> _installFeedback.value = null
             is InstallLaunchResult.NeedsPermission -> _installFeedback.value =
-                "Concede el permiso «Permitir de esta fuente» en Ajustes y vuelve a pulsar Instalar."
+                tr("android.config.install_permission_hint")
             is InstallLaunchResult.Error -> _installFeedback.value = result.message
         }
     }
@@ -166,7 +167,7 @@ class ConfigViewModel(
             _scanState.value = if (result.isSuccess) {
                 LibraryScanState.Done(detected = result.detected, scanned = result.scanned)
             } else {
-                LibraryScanState.Error(result.error ?: "Error durante el escaneo")
+                LibraryScanState.Error(result.error ?: tr("android.config.scan_error"))
             }
         }
     }

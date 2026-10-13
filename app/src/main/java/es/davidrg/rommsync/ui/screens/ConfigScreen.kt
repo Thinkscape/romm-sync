@@ -66,6 +66,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import es.davidrg.rommsync.RomMSyncApplication
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.update.UpdateCheckResult
 import es.davidrg.rommsync.data.update.UpdateDownloadState
 import es.davidrg.rommsync.ui.components.FolderPickerDialog
@@ -131,7 +132,7 @@ fun ConfigScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Configuración") },
+                title = { Text(tr("platforms.card.configure")) },
                 modifier = Modifier.height(if (compact) 48.dp else 64.dp),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -164,15 +165,14 @@ fun ConfigScreen() {
                             )
                             Spacer(modifier = Modifier.size(10.dp))
                             Text(
-                                "Permiso de almacenamiento requerido",
+                                tr("android.config.storage_permission_title"),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Concede acceso a todos los archivos para que la app pueda " +
-                                "escribir las ROMs en la estructura de carpetas de ES-DE.",
+                            tr("android.config.storage_permission_message"),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
@@ -180,7 +180,7 @@ fun ConfigScreen() {
                         FilledTonalButton(
                             onClick = { es.davidrg.rommsync.util.requestAllFilesAccess(context) },
                         ) {
-                            Text("Conceder permiso")
+                            Text(tr("android.config.grant_permission"))
                         }
                     }
                 }
@@ -189,13 +189,13 @@ fun ConfigScreen() {
             // ── Servidor ────────────────────────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.Dns,
-                title = "Servidor RomM",
+                title = tr("settings.server.title"),
             ) {
                 OutlinedTextField(
                     value = serverUrl,
                     onValueChange = { serverUrl = it },
-                    label = { Text("URL del servidor") },
-                    placeholder = { Text("https://romm.midominio.com") },
+                    label = { Text(tr("settings.server.url")) },
+                    placeholder = { Text(tr("settings.server.url_placeholder")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -207,7 +207,7 @@ fun ConfigScreen() {
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
-                    label = { Text("API Key") },
+                    label = { Text(tr("settings.server.api_key")) },
                     placeholder = { Text("rmm_...") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -222,7 +222,7 @@ fun ConfigScreen() {
                             Icon(
                                 imageVector = if (apiKeyVisible) Icons.Filled.VisibilityOff
                                               else Icons.Filled.Visibility,
-                                contentDescription = "Mostrar u ocultar API Key",
+                                contentDescription = tr("android.config.api_key_toggle"),
                             )
                         }
                     },
@@ -232,12 +232,12 @@ fun ConfigScreen() {
             // ── Almacenamiento ──────────────────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.Folder,
-                title = "Directorio de ROMs (ES-DE)",
+                title = tr("settings.roms.title"),
             ) {
                 OutlinedTextField(
                     value = settings.romsRootPath,
                     onValueChange = { viewModel.setRomsRootPath(it) },
-                    label = { Text("Ruta raíz") },
+                    label = { Text(tr("android.config.roms_root_path_label")) },
                     placeholder = { Text("/storage/emulated/0/ROMs") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -254,7 +254,7 @@ fun ConfigScreen() {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Seleccionar carpeta")
+                    Text(tr("common.select_folder"))
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -266,12 +266,12 @@ fun ConfigScreen() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Dos rutas de ROMs",
+                            tr("android.config.dual_paths_title"),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            "Elige a dónde descargar cada juego: memoria interna o tarjeta SD",
+                            tr("android.config.dual_paths_hint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -288,7 +288,7 @@ fun ConfigScreen() {
                     OutlinedTextField(
                         value = settings.secondaryRomsPath,
                         onValueChange = { viewModel.setSecondaryRomsPath(it) },
-                        label = { Text("Segunda ruta (tarjeta SD)") },
+                        label = { Text(tr("android.config.secondary_path_label")) },
                         placeholder = { Text("/storage/emulated/1/ROMs") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -305,7 +305,7 @@ fun ConfigScreen() {
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Seleccionar carpeta SD")
+                        Text(tr("android.config.select_sd_folder"))
                     }
                 }
             }
@@ -313,11 +313,10 @@ fun ConfigScreen() {
             // ── Escanear biblioteca local ───────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.Search,
-                title = "Escanear biblioteca",
+                title = tr("common.scan_library"),
             ) {
                 Text(
-                    "Detecta los juegos que ya tienes en disco (por ejemplo copiados " +
-                        "desde el PC) y los marca como descargados comparándolos con el servidor.",
+                    tr("android.config.scan_hint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -342,14 +341,14 @@ fun ConfigScreen() {
                         )
                     }
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Escanear ahora")
+                    Text(tr("settings.scan.scan_now"))
                 }
 
                 when (val s = scanState) {
                     is LibraryScanState.Scanning -> {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            s.platformName?.let { "Escaneando: $it..." } ?: "Preparando escaneo...",
+                            s.platformName?.let { tr("android.config.scanning", it) } ?: tr("android.config.scan_preparing"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -358,11 +357,13 @@ fun ConfigScreen() {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             if (s.detected > 0) {
-                                "${s.detected} juego${if (s.detected != 1) "s" else ""} " +
-                                    "detectado${if (s.detected != 1) "s" else ""} " +
-                                    "de ${s.scanned} comprobados."
+                                if (s.detected == 1) {
+                                    tr("android.config.scan_done_single", s.detected, s.scanned)
+                                } else {
+                                    tr("android.config.scan_done_plural", s.detected, s.scanned)
+                                }
                             } else {
-                                "No se detectaron juegos nuevos (${s.scanned} comprobados)."
+                                tr("android.config.scan_done_none", s.scanned)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.secondary,
@@ -371,7 +372,7 @@ fun ConfigScreen() {
                     is LibraryScanState.Error -> {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Error: ${s.message}",
+                            tr("common.error_detail", s.message),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -382,7 +383,7 @@ fun ConfigScreen() {
                 if (!settings.isConfigured) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Configura y guarda el servidor RomM antes de escanear.",
+                        tr("android.config.scan_needs_server"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -392,7 +393,7 @@ fun ConfigScreen() {
             // ── ES-DE Data Dir ───────────────────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.Folder,
-                title = "Datos de ES-DE (gamelist)",
+                title = tr("settings.esde.title"),
             ) {
                 // Toggle maestro: oculta la función de exportación a ES-DE
                 var esdeEnabledLocal by remember { mutableStateOf<Boolean?>(null) }
@@ -403,10 +404,9 @@ fun ConfigScreen() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Usar ES-DE", style = MaterialTheme.typography.bodyLarge)
+                        Text(tr("android.config.use_esde"), style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "Desactívalo si no usas ES-DE como frontend: se ocultará " +
-                                "su configuración y la exportación de metadatos.",
+                            tr("android.config.use_esde_hint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -424,7 +424,7 @@ fun ConfigScreen() {
                 OutlinedTextField(
                     value = esdeDataDir,
                     onValueChange = { viewModel.setEsdeDataPath(it) },
-                    label = { Text("Directorio de datos ES-DE") },
+                    label = { Text(tr("android.config.esde_data_dir_label")) },
                     placeholder = { Text("/storage/emulated/0/ES-DE") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -441,12 +441,11 @@ fun ConfigScreen() {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Seleccionar carpeta")
+                    Text(tr("common.select_folder"))
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Aquí es donde ES-DE guarda los gamelist.xml. " +
-                        "Los metadatos exportados se escribirán en esta carpeta.",
+                    tr("android.config.esde_data_hint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -456,7 +455,7 @@ fun ConfigScreen() {
             // ── RetroHRAI Media ──────────────────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.Folder,
-                title = "Media de RetroHRAI",
+                title = tr("android.config.retrohrai_section"),
             ) {
                 // Toggle maestro: oculta la exportación a RetroHRAI
                 var retroHraiEnabledLocal by remember { mutableStateOf<Boolean?>(null) }
@@ -467,10 +466,9 @@ fun ConfigScreen() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Usar RetroHRAI", style = MaterialTheme.typography.bodyLarge)
+                        Text(tr("android.config.use_retrohrai"), style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "Desactívalo si no usas RetroHRAI: se ocultará su " +
-                                "configuración y la copia de media en sus carpetas.",
+                            tr("android.config.use_retrohrai_hint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -488,7 +486,7 @@ fun ConfigScreen() {
                 OutlinedTextField(
                     value = retroHraiMediaPath,
                     onValueChange = { viewModel.setRetroHraiMediaPath(it) },
-                    label = { Text("Ruta base de media RetroHRAI") },
+                    label = { Text(tr("android.config.retrohrai_media_path_label")) },
                     placeholder = { Text("/storage/emulated/0/RetroHrai/media") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -505,12 +503,11 @@ fun ConfigScreen() {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Seleccionar carpeta")
+                    Text(tr("common.select_folder"))
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Los metadatos se escribirán como " +
-                        "{juego}_{tipo}_{n}.jpg en subcarpetas covers, fanart, logos, screenshots.",
+                    tr("android.config.retrohrai_media_hint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -520,10 +517,14 @@ fun ConfigScreen() {
             // ── Descargas ───────────────────────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.DownloadForOffline,
-                title = "Descargas simultáneas",
+                title = tr("settings.downloads.title"),
             ) {
                 Text(
-                    "${settings.maxConcurrentDownloads} ${if (settings.maxConcurrentDownloads == 1) "descarga" else "descargas"} en paralelo",
+                    if (settings.maxConcurrentDownloads == 1) {
+                        tr("android.config.downloads_parallel_one", settings.maxConcurrentDownloads)
+                    } else {
+                        tr("android.config.downloads_parallel_many", settings.maxConcurrentDownloads)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -540,9 +541,9 @@ fun ConfigScreen() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Solo WiFi", style = MaterialTheme.typography.bodyLarge)
+                        Text(tr("android.config.wifi_only_downloads"), style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "Descarga ROMs únicamente con conexiones sin límite de datos. La sincronización de saves funciona con cualquier red.",
+                            tr("android.config.wifi_only_downloads_hint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -562,7 +563,7 @@ fun ConfigScreen() {
             val saveSyncEnabled by container.settingsRepository.saveSyncEnabled.collectAsState(initial = true)
             SettingsSection(
                 icon = Icons.Outlined.Sync,
-                title = "Sincronización de partidas",
+                title = tr("common.save_sync"),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -570,10 +571,9 @@ fun ConfigScreen() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Sincronizar saves", style = MaterialTheme.typography.bodyLarge)
+                        Text(tr("window.tray.sync_saves"), style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "Desactívalo para ocultar la pestaña Sync, su configuración " +
-                                "y cualquier trabajo de sincronización en segundo plano.",
+                            tr("android.config.sync_saves_hint"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -600,9 +600,9 @@ fun ConfigScreen() {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Solo con WiFi", style = MaterialTheme.typography.bodyMedium)
+                            Text(tr("android.config.sync_wifi_only_label"), style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                "El sync automático no se ejecuta con datos móviles.",
+                                tr("android.config.sync_wifi_only_hint"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -619,9 +619,9 @@ fun ConfigScreen() {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Solo cargando", style = MaterialTheme.typography.bodyMedium)
+                            Text(tr("android.config.sync_charging_only_label"), style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                "El sync automático se ejecuta únicamente con el dispositivo cargando.",
+                                tr("android.config.sync_charging_only_hint"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -637,7 +637,7 @@ fun ConfigScreen() {
 
                     // Política de conflictos
                     val conflictPolicy by viewModel.conflictPolicy.collectAsState()
-                    Text("Cuando un save cambie aquí y en el servidor:", style = MaterialTheme.typography.bodyMedium)
+                    Text(tr("android.config.conflict_policy_prompt"), style = MaterialTheme.typography.bodyMedium)
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         es.davidrg.rommsync.core.sync.ConflictPolicy.entries.forEach { p ->
@@ -649,8 +649,7 @@ fun ConfigScreen() {
                         }
                     }
                     Text(
-                        "Antes de sobrescribir una copia local se guarda una copia de seguridad " +
-                            "restaurable en el detalle del juego.",
+                        tr("android.config.sync_backup_hint"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -660,10 +659,10 @@ fun ConfigScreen() {
             // ── Actualizaciones ────────────────────────────────────────
             SettingsSection(
                 icon = Icons.Outlined.SystemUpdateAlt,
-                title = "Actualizaciones",
+                title = tr("settings.updates.title"),
             ) {
                 Text(
-                    "Versión instalada: ${viewModel.currentVersion}",
+                    tr("android.config.installed_version", viewModel.currentVersion),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -687,20 +686,20 @@ fun ConfigScreen() {
                         )
                     }
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Buscar actualizaciones")
+                    Text(tr("settings.updates.check"))
                 }
 
                 when (val r = updateCheckState) {
                     is UpdateCheckResult.UpdateAvailable -> {
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            "Nueva versión disponible: ${r.latestVersion}",
+                            tr("android.config.update_available", r.latestVersion),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Tamaño: ${"%.1f".format(r.apkSize / 1024f / 1024f)} MB",
+                            tr("android.config.update_size", "%.1f".format(r.apkSize / 1024f / 1024f)),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -710,7 +709,7 @@ fun ConfigScreen() {
                         if (r.releaseNotes.isNotBlank()) {
                             var showNotes by remember { mutableStateOf(false) }
                             TextButton(onClick = { showNotes = !showNotes }) {
-                                Text(if (showNotes) "Ocultar novedades" else "Ver novedades")
+                                Text(if (showNotes) tr("settings.updates.hide_notes") else tr("settings.updates.show_notes"))
                             }
                             if (showNotes) {
                                 Surface(
@@ -735,17 +734,17 @@ fun ConfigScreen() {
                         if (r.latestVersion == skipped) {
                             // Versión omitida: ofrecer re-comprobación sin instalador
                             Text(
-                                "Versión v${r.latestVersion} omitida",
+                                tr("android.config.version_skipped", r.latestVersion),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             FilledTonalButton(
                                 onClick = { viewModel.recheckSkippedVersion() },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Volver a ofrecer esta versión") }
+                            ) { Text(tr("android.config.reoffer_version")) }
                         } else {
                             TextButton(onClick = { viewModel.skipCurrentVersion() }) {
-                                Text("Saltar esta versión")
+                                Text(tr("settings.updates.skip_version"))
                             }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -758,7 +757,7 @@ fun ConfigScreen() {
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "Descargando… ${"%.0f".format(d.progress * 100)}%",
+                                    tr("android.config.update_downloading_progress", "%.0f".format(d.progress * 100)),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -774,12 +773,12 @@ fun ConfigScreen() {
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.size(6.dp))
-                                    Text("Instalar ahora")
+                                    Text(tr("android.config.update_install_now"))
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     installFeedback
-                                        ?: "Android pedirá confirmación antes de instalar.",
+                                        ?: tr("android.config.update_install_hint"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (installFeedback != null) MaterialTheme.colorScheme.error
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -787,7 +786,7 @@ fun ConfigScreen() {
                             }
                             is UpdateDownloadState.Error -> {
                                 Text(
-                                    "Error: ${d.message}",
+                                    tr("common.error_detail", d.message),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
                                 )
@@ -796,7 +795,7 @@ fun ConfigScreen() {
                                     onClick = { viewModel.downloadUpdate() },
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Text("Reintentar descarga")
+                                    Text(tr("android.config.update_retry_download"))
                                 }
                             }
                             UpdateDownloadState.Idle -> {
@@ -810,7 +809,7 @@ fun ConfigScreen() {
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.size(6.dp))
-                                    Text("Descargar ${r.latestVersion}")
+                                    Text(tr("android.config.update_download", r.latestVersion))
                                 }
                             }
                         }
@@ -818,7 +817,7 @@ fun ConfigScreen() {
                     is UpdateCheckResult.Error -> {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Error: ${r.message}",
+                            tr("common.error_detail", r.message),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -834,7 +833,7 @@ fun ConfigScreen() {
                             )
                             Spacer(modifier = Modifier.size(6.dp))
                             Text(
-                                "Estás en la última versión",
+                                tr("android.config.update_up_to_date"),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.secondary,
                             )
@@ -859,7 +858,7 @@ fun ConfigScreen() {
                 shape = RoundedCornerShape(14.dp),
                 enabled = serverUrl.isNotBlank() && apiKey.isNotBlank(),
             ) {
-                Text("Guardar configuración", style = MaterialTheme.typography.labelLarge)
+                Text(tr("android.config.save_button"), style = MaterialTheme.typography.labelLarge)
             }
 
             if (settings.isConfigured) {
@@ -876,7 +875,7 @@ fun ConfigScreen() {
                     )
                     Spacer(modifier = Modifier.size(6.dp))
                     Text(
-                        text = "Servidor configurado",
+                        text = tr("android.config.server_configured"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.secondary,
                     )

@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import es.davidrg.rommsync.data.local.RomSyncDatabase
 import es.davidrg.rommsync.data.local.SettingsDataStore
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.domain.model.Rom
 import kotlinx.coroutines.Dispatchers
@@ -328,8 +329,8 @@ class MetadataExportWorker(
 
     private fun createForegroundInfo(slug: String, progress: Int, mediaCount: Int): ForegroundInfo {
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setContentTitle("Exportando metadatos: $slug")
-            .setContentText("$mediaCount archivos descargados")
+            .setContentTitle(tr("android.metadata.notification_title", slug))
+            .setContentText(tr("android.metadata.notification_text", mediaCount))
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setProgress(100, progress, progress == 0)
@@ -346,9 +347,9 @@ class MetadataExportWorker(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Exportación de metadatos",
+                tr("android.metadata.channel_name"),
                 NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "Progreso de exportación de metadatos a ES-DE" }
+            ).apply { description = tr("android.metadata.channel_description") }
             val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
                 as NotificationManager
             manager.createNotificationChannel(channel)
