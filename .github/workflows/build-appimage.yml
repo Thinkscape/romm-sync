@@ -45,8 +45,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # La fat jar de :desktop es arch-independent: se compila UNA vez por job
-      # (la matrix la repite, pero simplifica el workflow).
+      # The :desktop fat jar is arch-independent: it is compiled ONCE per job
+      # (the matrix repeats it, but it simplifies the workflow).
       - name: Build desktop fat jar
         run: ./gradlew :desktop:packageReleaseUberJarForCurrentOS
 
@@ -57,7 +57,7 @@ jobs:
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      # Descargar el JDK del arch objetivo y jlinkear un runtime mínimo
+      # Download the target-arch JDK and jlink a minimal runtime
       - name: Download target-arch JDK
         run: |
           curl -sL "${{ matrix.jdk }}" -o /tmp/jdk-${{ matrix.arch }}.tar.gz
@@ -66,8 +66,8 @@ jobs:
 
       - name: jlink minimal runtime
         run: |
-          # Cross-jlink: se ejecuta el jlink del JDK del host (x86_64) pero con
-          # los jmods del JDK del arch objetivo -> runtime para aarch64/x86_64.
+          # Cross-jlink: the jlink of the host JDK (x86_64) is run but with
+          # the target-arch JDK's jmods -> a runtime for aarch64/x86_64.
           "$JAVA_HOME/bin/jlink" \
             --module-path "/tmp/jdk-${{ matrix.arch }}/jmods" \
             --add-modules "$MODULES" \
@@ -89,7 +89,7 @@ jobs:
           JAR="$(ls desktop/build/compose/jars/romm-sync-linux-*-release.jar | head -1)"
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
           cp "$JAR" AppDir/usr/bin/romm-sync.jar
-          # Launcher: usa el runtime jlinkeado del arch objetivo
+          # Launcher: uses the jlinked runtime of the target arch
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
@@ -100,14 +100,14 @@ jobs:
           [Desktop Entry]
           Type=Application
           Name=RomM Sync
-          Comment=Sincroniza ROMs y saves con tu servidor RomM
+          Comment=Sync ROMs and saves with your RomM server
           Exec=romm-sync
           Icon=romm-sync
           Categories=Game;Utility;
           EOF
           cp desktop/packaging/romm-sync.png AppDir/usr/share/icons/hicolor/256x256/apps/romm-sync.png
           cp desktop/packaging/romm-sync.png AppDir/romm-sync.png
-          # appimagetool busca el icono en la raíz del AppDir
+          # appimagetool looks for the icon at the root of the AppDir
 
       - name: Build AppImage (${{ matrix.arch }})
         run: |
@@ -128,20 +128,20 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           body: |
-            **RomM Sync** – build multiplataforma generado automáticamente
+            **RomM Sync** – cross-platform build generated automatically
 
             **Commit:** [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
-            ### 📦 Descargas
+            ### 📦 Downloads
 
-            | Archivo | Plataforma |
+            | File | Platform |
             |---|---|
-            | `RomM-Sync-v${{ steps.version.outputs.version }}-android.apk` | Android (R8 minificado) |
-            | `RomM-Sync-v${{ steps.version.outputs.version }}-linux-x86_64.AppImage` | Linux x86_64 (SteamOS, Steam Deck, la mayoría de PCs) |
+            | `RomM-Sync-v${{ steps.version.outputs.version }}-android.apk` | Android (R8 minified) |
+            | `RomM-Sync-v${{ steps.version.outputs.version }}-linux-x86_64.AppImage` | Linux x86_64 (SteamOS, Steam Deck, most PCs) |
             | `RomM-Sync-v${{ steps.version.outputs.version }}-linux-aarch64.AppImage` | Linux ARM64 (Raspberry Pi 5, ARM handhelds) |
 
-            ### 🔄 Cómo actualizar
+            ### 🔄 How to update
 
-            - **Android:** Configuración → Actualizaciones → *Buscar actualizaciones*, o descarga el APK adjunto y ábrelo — se instala encima sin perder datos.
-            - **Linux:** descarga el AppImage de tu arquitectura, dale permisos de ejecución (`chmod +x`) y ejecútalo. Reemplaza el archivo anterior.
+            - **Android:** Settings → Updates → *Check for updates*, or download the attached APK and open it — it installs over the previous version without losing data.
+            - **Linux:** download the AppImage for your architecture, give it execute permission (`chmod +x`) and run it. Replaces the previous file.
           files: RomM-Sync-*-linux-${{ matrix.arch }}.AppImage

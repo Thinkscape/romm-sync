@@ -1,97 +1,97 @@
-# Diseño: Sincronización de Partidas Guardadas
+# Design: Save Game Synchronization
 
-Documento de diseño para la funcionalidad de sincronización bidireccional
-de saves y states con el servidor RomM.
+Design document for the bidirectional synchronization of saves and states
+with the RomM server.
 
-## Protocolo del servidor (Device Sync Protocol, RomM 4.9+)
+## Server protocol (Device Sync Protocol, RomM 4.9+)
 
-Referencia: https://docs.romm.app/latest/developers/device-sync-protocol/
+Reference: https://docs.romm.app/latest/developers/device-sync-protocol/
 
-### Flujo
+### Flow
 
-1. **Registro del dispositivo** — `POST /api/devices`
-   - Se envía una vez, se cachea el `device_id` localmente.
-   - Incluye nombre, plataforma (`android`), hostname, paths locales.
+1. **Device registration** — `POST /api/devices`
+   - Sent once, the `device_id` is cached locally.
+   - Includes name, platform (`android`), hostname, local paths.
 
-2. **Negociación** — `POST /api/sync/negotiate`
-   - El cliente envía la lista de ROMs que tiene descargados con sus saves:
+2. **Negotiation** — `POST /api/sync/negotiate`
+   - The client sends the list of ROMs it has downloaded with their saves:
      `{ rom_id, saves: [{ file, mtime, sha1 }] }`
-   - El servidor responde con operaciones: `upload`, `download`, `conflict`, `noop`.
+   - The server responds with operations: `upload`, `download`, `conflict`, `noop`.
 
-3. **Ejecución de operaciones**
+3. **Operation execution**
    - `upload`: `POST /api/saves` (multipart)
    - `download`: `GET /api/saves/{id}/content`
-   - `conflict`: requiere resolución del usuario (o política por defecto).
+   - `conflict`: requires user resolution (or the default policy).
 
-4. **Cierre de sesión** — `POST /api/sync/sessions/{session_id}/complete`
+4. **Session close** — `POST /api/sync/sessions/{session_id}/complete`
 
-### Autenticación
+### Authentication
 
-Bearer token (`rmm_...`), el mismo que ya usamos. Scopes requeridos:
+Bearer token (`rmm_...`), the same one we already use. Required scopes:
 `assets.read`, `assets.write`, `devices.read`, `devices.write`.
 
 ---
 
-## Arquitectura en la app
+## App architecture
 
-### Componentes nuevos
+### New components
 
 ```
 data/sync/
 ├── SaveSyncWorker.kt              # CoroutineWorker (WorkManager)
-├── SyncCoordinator.kt             # Orquesta negotiate → execute → complete
-├── SaveSyncManager.kt             # API para la UI (trigger + observar estado)
-└── platform/                      # Handlers por plataforma/emulador
-    ├── SaveHandler.kt             # Interfaz base + LocalSave
-    ├── SaveHandlerRegistry.kt     # Selecciona handler por (plataforma, emulador)
-    ├── RetroArchSaveHandler.kt    # Ficheros planos .srm/.state por slug
-    ├── MelonDsSaveHandler.kt      # DS: .sav plano por nombre ROM
-    ├── PpssppSaveHandler.kt       # PSP: carpetas por disc-id (zip)
-    ├── Ps2SaveHandler.kt          # PS2: folder memory card por serial (zip)
-    ├── DolphinSaveHandler.kt      # GC: GCI por game-id; Wii: title/data (zip)
-    └── SwitchSaveHandler.kt       # Switch (Eden): carpeta por title-id (zip)
+├── SyncCoordinator.kt             # Orchestrates negotiate → execute → complete
+├── SaveSyncManager.kt             # UI-facing API (trigger + observe state)
+└── platform/                      # Per-platform/emulator handlers
+    ├── SaveHandler.kt             # Base interface + LocalSave
+    ├── SaveHandlerRegistry.kt     # Picks a handler by (platform, emulator)
+    ├── RetroArchSaveHandler.kt    # Flat .srm/.state files per slug
+    ├── MelonDsSaveHandler.kt      # DS: flat .sav per ROM name
+    ├── PpssppSaveHandler.kt       # PSP: folders per disc-id (zip)
+    ├── Ps2SaveHandler.kt          # PS2: folder memory card per serial (zip)
+    ├── DolphinSaveHandler.kt      # GC: GCI per game-id; Wii: title/data (zip)
+    └── SwitchSaveHandler.kt       # Switch (Eden): folder per title-id (zip)
 ```
 
-> Estado: implementado. Los DTOs del protocolo viven en
-> `data/remote/dto/SyncDto.kt` y los endpoints en `RomMApiService`.
+> Status: implemented. The protocol DTOs live in
+> `data/remote/dto/SyncDto.kt` and the endpoints in `RomMApiService`.
 
-### Interfaz SaveHandler
+### SaveHandler interface
 
 ```kotlin
 interface SaveHandler {
-    /** Localiza los ficheros de save para un ROM dado. */
+    /** Locates the save files for a given ROM. */
     suspend fun findSaves(rom: Rom, config: PlatformSyncConfig): List<LocalSave>
 
-    /** Prepara un save para subir (zip si es carpeta, raw si es fichero). */
+    /** Prepares a save for upload (zip if it's a folder, raw if it's a file). */
     suspend fun prepareForUpload(save: LocalSave): File
 
-    /** Extrae un save descargado al destino correcto en disco. */
+    /** Extracts a downloaded save to the correct destination on disk. */
     suspend fun extractDownload(tempFile: File, rom: Rom, config: PlatformSyncConfig): Boolean
 }
 ```
 
 ---
 
-## Configuración del usuario
+## User configuration
 
-### En la pantalla de Plataformas (nuevo campo por plataforma)
+### On the Platforms screen (new field per platform)
 
-- **Ruta de saves** (override): por defecto se calcula según el emulador,
-  pero el usuario puede cambiarla.
-- **Emulador** (selector): determina qué handler usar. Opciones según
-  la plataforma (p.ej. DS: melonDS / RetroArch).
+- **Saves path** (override): by default it is computed from the emulator,
+  but the user can change it.
+- **Emulator** (selector): determines which handler to use. Options depend on
+  the platform (e.g. DS: melonDS / RetroArch).
 
-### En Configuración general (nuevo campo)
+### In General settings (new field)
 
-- **Ruta base de RetroArch**: por defecto `/storage/emulated/0/RetroArch`
+- **RetroArch base path**: defaults to `/storage/emulated/0/RetroArch`
 
 ---
 
-## Rutas de saves por plataforma
+## Saves paths per platform
 
-### RetroArch (caso general, ~80% de plataformas)
+### RetroArch (general case, ~80% of platforms)
 
-Estructura con subcarpetas por slug de plataforma (estilo ES-DE):
+Structure with subfolders per platform slug (ES-DE style):
 
 ```
 {retroarchBase}/saves/{platformSlug}/{romBaseName}.srm
@@ -100,12 +100,12 @@ Estructura con subcarpetas por slug de plataforma (estilo ES-DE):
 ...
 ```
 
-Donde:
-- `{retroarchBase}` = ruta configurable (default: `/storage/emulated/0/RetroArch`)
-- `{platformSlug}` = slug de la plataforma en RomM/ES-DE (`gba`, `snes`, `n64`, `psx`...)
-- `{romBaseName}` = nombre del fichero ROM sin extensión
+Where:
+- `{retroarchBase}` = configurable path (default: `/storage/emulated/0/RetroArch`)
+- `{platformSlug}` = platform slug in RomM/ES-DE (`gba`, `snes`, `n64`, `psx`...)
+- `{romBaseName}` = ROM file name without extension
 
-### DS — melonDS (prioridad 1)
+### DS — melonDS (priority 1)
 
 ```
 {melondsBase}/saves/{romBaseName}.sav
@@ -113,9 +113,9 @@ Donde:
 
 Default: `/storage/emulated/0/melonDS/saves/`
 
-### DS — RetroArch (prioridad 2)
+### DS — RetroArch (priority 2)
 
-Igual que el caso general de RetroArch con slug `nds`.
+Same as the general RetroArch case with slug `nds`.
 
 ### PSP — PPSSPP
 
@@ -123,11 +123,11 @@ Igual que el caso general de RetroArch con slug `nds`.
 {ppssppBase}/PSP/SAVEDATA/{discId}*/
 ```
 
-Cada juego genera N carpetas con prefijo de disc-id (9 chars, p.ej.
-`ULUS10064`). Se agrupan todas las carpetas con el mismo prefijo, se
-zipean para upload, se descomprimen en download.
+Each game generates N folders prefixed with the disc-id (9 chars, e.g.
+`ULUS10064`). All folders with the same prefix are grouped together, zipped
+for upload, and unzipped on download.
 
-Requiere extracción de disc-id del ISO/CSO.
+Requires disc-id extraction from the ISO/CSO.
 
 ### PS2 — AetherSX2/NetherSX2 (Folder Memory Card)
 
@@ -135,11 +135,11 @@ Requiere extracción de disc-id del ISO/CSO.
 {aetherBase}/memcards/{cardName}.ps2/{BAserial}/
 ```
 
-- El emulador debe estar configurado con "Folder Memory Card" activo.
-- `{BAserial}` = `BA` + serial normalizado (p.ej. `BASLUS-21050`).
-- Se zipea la carpeta del serial para upload.
+- The emulator must be configured with "Folder Memory Card" enabled.
+- `{BAserial}` = `BA` + normalized serial (e.g. `BASLUS-21050`).
+- The serial's folder is zipped for upload.
 
-Requiere extracción de serial del ISO.
+Requires serial extraction from the ISO.
 
 ### GameCube — Dolphin
 
@@ -147,72 +147,72 @@ Requiere extracción de serial del ISO.
 {dolphinBase}/GC/{region}/Card A/*.gci
 ```
 
-O en modo carpeta: subcarpetas por game-id. Se bundlean como zip.
+Or in folder mode: subfolders per game-id. They are bundled as a zip.
 
-### Switch — Eden (fork de Yuzu)
+### Switch — Eden (Yuzu fork)
 
 ```
 {edenBase}/nand/user/save/{userId}/{profileId}/{titleId}/
 ```
 
-Ruta base por defecto en Android:
+Default base path on Android:
 `/storage/emulated/0/Android/data/dev.eden.eden_emulator/files`
 
-`{titleId}` = 16 chars hex (p.ej. `0100000000010000`). `{userId}` y
-`{profileId}` son IDs de 16 hex chars asignados por el emulador. La carpeta
-del título se zipea entera para sync.
+`{titleId}` = 16 hex chars (e.g. `0100000000010000`). `{userId}` and
+`{profileId}` are 16 hex-char IDs assigned by the emulator. The title's
+folder is zipped whole for sync.
 
 ---
 
-## Gestión de conflictos
+## Conflict handling
 
-Cuando el servidor devuelve `"type": "conflict"`:
+When the server returns `"type": "conflict"`:
 
-1. Se notifica al usuario (notificación + badge en la pestaña de sync).
-2. En la UI, el usuario elige: "Mantener local", "Mantener servidor",
-   "Mantener ambos".
-3. Opción global: política por defecto configurable (para quien no quiera
-   intervenir).
-
----
-
-## Prioridad de implementación
-
-| Fase | Alcance | Estado |
-|------|---------|--------|
-| A    | Infraestructura: registro dispositivo, SyncWorker, negotiate/execute/complete | Implementado |
-| B    | RetroArch handler (saves + states por slug/nombre) | Implementado |
-| C    | melonDS handler (DS, fichero plano) | Implementado |
-| D    | Configuración por plataforma (ruta override, selector emulador) | Implementado |
-| E    | PPSSPP handler (carpetas por disc-id) | Implementado |
-| F    | PS2 handler (folder memcard por serial) | Implementado |
-| G    | Dolphin handler (GC GCI + Wii title/data) | Implementado |
-| H    | Switch handler (Eden, carpetas por title-id) | Implementado |
-
-### Pendiente / mejoras futuras
-
-- Extracción de title-id/serial desde headers de ISO/ROM (actualmente se
-  infiere del nombre del fichero). Mejoraría PSP, PS2, GC/Wii y Switch.
-- UI de resolución de conflictos (actualmente se loggean y se omiten).
-- Sync periódico programado además del manual.
+1. The user is notified (notification + badge on the sync tab).
+2. In the UI, the user chooses: "Keep local", "Keep server",
+   "Keep both".
+3. Global option: configurable default policy (for those who don't want to
+   intervene).
 
 ---
 
-## Referencia: cómo lo hace Argosy
+## Implementation priority
 
-Argosy (rommapp/argosy-launcher) usa un `PlatformSaveHandlerRegistry` con
-handlers especializados:
+| Phase | Scope | Status |
+|-------|-------|--------|
+| A    | Infrastructure: device registration, SyncWorker, negotiate/execute/complete | Implemented |
+| B    | RetroArch handler (saves + states by slug/name) | Implemented |
+| C    | melonDS handler (DS, flat file) | Implemented |
+| D    | Per-platform configuration (path override, emulator selector) | Implemented |
+| E    | PPSSPP handler (folders per disc-id) | Implemented |
+| F    | PS2 handler (folder memcard per serial) | Implemented |
+| G    | Dolphin handler (GC GCI + Wii title/data) | Implemented |
+| H    | Switch handler (Eden, folders per title-id) | Implemented |
 
-- `RetroArchSaveHandler`: fichero plano en la carpeta de saves de RA.
-- `DefaultSaveHandler`: fallback genérico (fichero plano por nombre ROM).
-- `FolderSaveHandler` (base): para Vita, Wii, Wii U (carpeta por title-id).
-- `PspFolderHandler`: agrupa carpetas por prefijo de disc-id.
-- `Ps2FolderHandler`: folder memcard con normalización de serial (`BA`-prefix).
-- `N3dsFolderHandler`: traversal del arbol id0/id1.
-- `SwitchSaveHandler`: carpeta por title-id.
+### Pending / future improvements
+
+- Extraction of title-id/serial from ISO/ROM headers (currently inferred from
+  the file name). Would improve PSP, PS2, GC/Wii and Switch.
+- Conflict resolution UI (currently they are logged and skipped).
+- Scheduled periodic sync in addition to the manual one.
+
+---
+
+## Reference: how Argosy does it
+
+Argosy (rommapp/argosy-launcher) uses a `PlatformSaveHandlerRegistry` with
+specialized handlers:
+
+- `RetroArchSaveHandler`: flat file in RA's saves folder.
+- `DefaultSaveHandler`: generic fallback (flat file per ROM name).
+- `FolderSaveHandler` (base): for Vita, Wii, Wii U (folder per title-id).
+- `PspFolderHandler`: groups folders by disc-id prefix.
+- `Ps2FolderHandler`: folder memcard with serial normalization (`BA`-prefix).
+- `N3dsFolderHandler`: traversal of the id0/id1 tree.
+- `SwitchSaveHandler`: folder per title-id.
 - `GciSaveHandler`: GameCube GCI bundles.
 
-Usa un submodulo (`sigil`) para extracción de title-id de los ROMs.
-Nosotros empezaremos sin eso (usando el nombre de archivo y el slug),
-y lo añadiremos cuando sea necesario para las plataformas con
-carpetas por title-id.
+It uses a submodule (`sigil`) to extract the title-id from the ROMs.
+We will start without that (using the file name and the slug),
+and add it when it becomes necessary for platforms with
+folders per title-id.
