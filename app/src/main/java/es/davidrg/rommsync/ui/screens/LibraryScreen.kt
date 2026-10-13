@@ -117,6 +117,7 @@ import coil.compose.AsyncImage
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import es.davidrg.rommsync.RomMSyncApplication
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.domain.model.DownloadStatus
 import es.davidrg.rommsync.domain.model.formatBytesForUi
 import es.davidrg.rommsync.domain.model.Platform
@@ -127,8 +128,10 @@ import es.davidrg.rommsync.ui.viewmodel.LibraryEvent
 import es.davidrg.rommsync.ui.viewmodel.LibraryViewModel
 import es.davidrg.rommsync.ui.viewmodel.RomSort
 
-private enum class RomFilter(val label: String) {
-    ALL("Todos"), MISSING("Faltantes"), DOWNLOADED("Descargados")
+private enum class RomFilter(val labelKey: String) {
+    ALL("library.filter.all"),
+    MISSING("library.filter.missing"),
+    DOWNLOADED("library.filter.downloaded"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -198,25 +201,25 @@ fun LibraryScreen() {
             when (event) {
                 is LibraryEvent.DownloadStarted -> {
                     snackbarHostState.showSnackbar(
-                        message = "Descargando ${event.romName}",
+                        message = tr("app.snackbar.downloading", event.romName),
                         duration = SnackbarDuration.Short,
                     )
                 }
                 is LibraryEvent.BatchDownloadStarted -> {
                     snackbarHostState.showSnackbar(
-                        message = "Encoladas ${event.count} descargas",
+                        message = tr("app.snackbar.downloads_queued", event.count),
                         duration = SnackbarDuration.Short,
                     )
                 }
                 is LibraryEvent.DownloadDeleted -> {
                     snackbarHostState.showSnackbar(
-                        message = "Eliminado ${event.romName}",
+                        message = tr("app.snackbar.deleted", event.romName),
                         duration = SnackbarDuration.Short,
                     )
                 }
                 is LibraryEvent.RomMoved -> {
                     snackbarHostState.showSnackbar(
-                        message = "«${event.romName}» movido a ${event.targetPath}",
+                        message = tr("android.library.rom_moved", event.romName, event.targetPath),
                         duration = SnackbarDuration.Short,
                     )
                 }
@@ -405,7 +408,7 @@ fun LibraryScreen() {
                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     shape = CircleShape,
                 ) {
-                    Icon(Icons.Filled.ExpandLess, contentDescription = "Volver arriba")
+                    Icon(Icons.Filled.ExpandLess, contentDescription = tr("library.back_to_top"))
                 }
             }
         },
@@ -438,7 +441,7 @@ fun LibraryScreen() {
                 ) {
                     OutlinedTextField(
                         value = platforms.find { it.id == selectedPlatformId }?.name
-                            ?: "Selecciona plataforma",
+                            ?: tr("android.library.select_platform"),
                         onValueChange = {},
                         readOnly = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -475,7 +478,7 @@ fun LibraryScreen() {
                     ) {
                         Icon(
                             Icons.Filled.DownloadDone,
-                            contentDescription = "Descargar faltantes (${missingRoms.size})",
+                            contentDescription = tr("library.download_missing", missingRoms.size),
                             modifier = Modifier.size(22.dp),
                         )
                     }
@@ -486,7 +489,7 @@ fun LibraryScreen() {
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Buscar en toda la plataforma...") },
+                placeholder = { Text(tr("android.library.search_all_placeholder")) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 shape = fieldShape,
@@ -511,7 +514,7 @@ fun LibraryScreen() {
                         onClick = { selectedFilter = filter },
                         label = {
                             Text(
-                                filter.label,
+                                tr(filter.labelKey),
                                 style = if (compact) MaterialTheme.typography.labelSmall
                                         else MaterialTheme.typography.labelMedium,
                             )
@@ -527,7 +530,7 @@ fun LibraryScreen() {
                 // Juego aleatorio de la vista actual
                 if (romsWithStatus.isNotEmpty()) {
                     IconButton(onClick = { selectedRom = romsWithStatus.random().rom }) {
-                        Icon(Icons.Filled.Casino, contentDescription = "Juego aleatorio")
+                        Icon(Icons.Filled.Casino, contentDescription = tr("library.random_game"))
                     }
                 }
 
@@ -538,14 +541,14 @@ fun LibraryScreen() {
                         IconButton(onClick = { regionMenu = true }) {
                             Icon(
                                 Icons.Filled.Public,
-                                contentDescription = "Filtrar por región",
+                                contentDescription = tr("library.filter_region"),
                                 tint = if (regionFilter != null) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         DropdownMenu(expanded = regionMenu, onDismissRequest = { regionMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text("Todas las regiones") },
+                                text = { Text(tr("library.all_regions")) },
                                 onClick = { viewModel.setRegionFilter(null); regionMenu = false },
                             )
                             availableRegions.forEach { r ->
@@ -564,7 +567,7 @@ fun LibraryScreen() {
                     IconButton(onClick = { sortMenu = true }) {
                         Icon(
                             Icons.Filled.Sort,
-                            contentDescription = "Orden",
+                            contentDescription = tr("android.library.sort"),
                             tint = if (sort != RomSort.NAME_ASC) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -572,7 +575,7 @@ fun LibraryScreen() {
                     DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                         RomSort.entries.forEach { s ->
                             DropdownMenuItem(
-                                text = { Text(if (s == sort) "● ${s.label}" else s.label) },
+                                text = { Text(if (s == sort) "● " + tr(s.labelKey) else tr(s.labelKey)) },
                                 onClick = { viewModel.setSort(s); sortMenu = false },
                             )
                         }
@@ -597,7 +600,7 @@ fun LibraryScreen() {
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        "Selecciona una plataforma para ver los juegos",
+                        tr("android.library.select_platform_hint"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -610,23 +613,23 @@ fun LibraryScreen() {
                 val (icon, title, message) = when {
                     searchQuery.isNotBlank() -> Triple(
                         Icons.Filled.Search,
-                        "Sin resultados",
-                        "No hay juegos que coincidan con \"$searchQuery\"",
+                        tr("library.empty.no_results.title"),
+                        tr("android.library.empty.no_results.description", searchQuery),
                     )
                     selectedFilter == RomFilter.MISSING -> Triple(
                         Icons.Outlined.DownloadDone,
-                        "Todo descargado",
-                        "Todos los juegos de esta plataforma ya están en el dispositivo",
+                        tr("library.empty.all_downloaded.title"),
+                        tr("android.library.empty.all_downloaded.description"),
                     )
                     selectedFilter == RomFilter.DOWNLOADED -> Triple(
                         Icons.Outlined.Download,
-                        "Sin descargas",
-                        "Aún no hay juegos descargados de esta plataforma",
+                        tr("library.empty.no_downloads.title"),
+                        tr("android.library.empty.no_downloads.description"),
                     )
                     else -> Triple(
                         Icons.Outlined.SportsEsports,
-                        "Sin juegos",
-                        "No hay juegos disponibles para esta plataforma",
+                        tr("library.empty.no_games.title"),
+                        tr("android.library.empty.no_games.description"),
                     )
                 }
                 Box(
@@ -761,7 +764,8 @@ fun LibraryScreen() {
 
     // ── Batch download confirmation dialog ────────────────────────────────
     if (showBatchDialog && missingRoms.isNotEmpty()) {
-        val platformName = platforms.find { it.id == selectedPlatformId }?.name ?: "seleccionada"
+        val platformName = platforms.find { it.id == selectedPlatformId }?.name
+            ?: tr("android.library.platform_fallback")
         AlertDialog(
             onDismissRequest = { showBatchDialog = false },
             icon = {
@@ -772,16 +776,16 @@ fun LibraryScreen() {
                     tint = MaterialTheme.colorScheme.primary,
                 )
             },
-            title = { Text("Descargar faltantes") },
+            title = { Text(tr("android.library.download_missing_title")) },
             text = {
                 Column {
                     Text(
-                        "¿Descargar ${missingRoms.size} ROMs faltantes para «$platformName»?",
+                        tr("android.library.batch.confirm", missingRoms.size, platformName),
                     )
                     if (settings.dualRomsPathsEnabled) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            "Destino:",
+                            tr("android.library.destination"),
                             style = MaterialTheme.typography.labelLarge,
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -789,12 +793,12 @@ fun LibraryScreen() {
                             FilterChip(
                                 selected = batchSelectedRoot == null,
                                 onClick = { batchSelectedRoot = null },
-                                label = { Text("Interna") },
+                                label = { Text(tr("android.library.storage_internal")) },
                             )
                             FilterChip(
                                 selected = batchSelectedRoot != null,
                                 onClick = { batchSelectedRoot = settings.secondaryRomsPath },
-                                label = { Text("Tarjeta SD") },
+                                label = { Text(tr("android.library.storage_sd")) },
                             )
                         }
                     }
@@ -811,12 +815,12 @@ fun LibraryScreen() {
                         showBatchDialog = false
                     },
                 ) {
-                    Text("Descargar")
+                    Text(tr("common.download"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showBatchDialog = false }) {
-                    Text("Cancelar")
+                    Text(tr("common.cancel"))
                 }
             },
         )
@@ -834,7 +838,7 @@ fun LibraryScreen() {
                     tint = MaterialTheme.colorScheme.primary,
                 )
             },
-            title = { Text("¿Dónde descargar?") },
+            title = { Text(tr("android.library.where_to_download")) },
             text = {
                 Column {
                     Text(rom.name, style = MaterialTheme.typography.bodyMedium)
@@ -859,7 +863,7 @@ fun LibraryScreen() {
                         romPendingDestination = null
                     },
                 ) {
-                    Text("Memoria interna")
+                    Text(tr("android.library.storage_internal_memory"))
                 }
             },
             dismissButton = {
@@ -869,7 +873,7 @@ fun LibraryScreen() {
                         romPendingDestination = null
                     },
                 ) {
-                    Text("Tarjeta SD")
+                    Text(tr("android.library.storage_sd"))
                 }
             },
         )
@@ -887,16 +891,14 @@ fun LibraryScreen() {
                     tint = MaterialTheme.colorScheme.error,
                 )
             },
-            title = { Text("Eliminar descarga") },
+            title = { Text(tr("game.delete_download")) },
             text = {
                 val discs = romsWithStatus.firstOrNull { it.rom.id == rom.id }?.discCount ?: 1
                 Text(
                     if (discs > 1) {
-                        "¿Eliminar «${rom.name}» (${discs} discos) de este dispositivo? " +
-                            "Se borrarán todos los archivos del disco y volverará a marcarse como no descargado."
+                        tr("android.library.delete_confirm_multi", rom.name, discs)
                     } else {
-                        "¿Eliminar «${rom.name}» de este dispositivo? " +
-                            "Se borrará el archivo del disco y volverá a marcarse como no descargado."
+                        tr("android.library.delete_confirm_single", rom.name)
                     },
                 )
             },
@@ -911,12 +913,12 @@ fun LibraryScreen() {
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
                 ) {
-                    Text("Eliminar")
+                    Text(tr("game.delete.confirm"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { romToDelete = null }) {
-                    Text("Cancelar")
+                    Text(tr("common.cancel"))
                 }
             },
         )
@@ -1029,7 +1031,7 @@ private fun RomCard(
             ) {
                 Icon(
                     imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = "Descargado",
+                    contentDescription = tr("common.downloaded"),
                     tint = MaterialTheme.colorScheme.onSecondary,
                     modifier = Modifier.size(18.dp),
                 )
@@ -1081,7 +1083,7 @@ private fun RomCard(
             ) {
                 Icon(
                     Icons.Filled.Download,
-                    contentDescription = "Descargar",
+                    contentDescription = tr("common.download"),
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(20.dp),
                 )
@@ -1198,7 +1200,7 @@ private fun RomDetailSheet(
                 }
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "Cerrar")
+                Icon(Icons.Filled.Close, contentDescription = tr("game.viewer.close"))
             }
         }
 
@@ -1226,7 +1228,7 @@ private fun RomDetailSheet(
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        if (expanded) " Ver menos" else " Ver más",
+                        if (expanded) " " + tr("game.summary.show_less") else " " + tr("game.summary.show_more"),
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
@@ -1239,7 +1241,7 @@ private fun RomDetailSheet(
         val hasMedia = rom.screenshots.isNotEmpty() || rom.youtubeVideoId != null
         if (hasMedia) {
             Text(
-                text = "Multimedia",
+                text = tr("game.media.title"),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -1250,7 +1252,7 @@ private fun RomDetailSheet(
                     items(rom.screenshots.size) { index ->
                         AsyncImage(
                             model = rom.screenshots[index],
-                            contentDescription = "Captura ${index + 1}",
+                            contentDescription = tr("android.library.screenshot_n", index + 1),
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(width = 128.dp, height = 72.dp)
@@ -1269,7 +1271,7 @@ private fun RomDetailSheet(
                 }
                 if (rom.screenshots.size > 1) {
                     Text(
-                        text = "Toca una captura para verla a pantalla completa",
+                        text = tr("android.library.screenshot_tap_hint"),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
@@ -1289,18 +1291,18 @@ private fun RomDetailSheet(
                         contentDescription = null,
                         modifier = Modifier.size(20.dp),
                     )
-                    Text("  Ver tráiler")
+                    Text("  " + tr("game.media.watch_trailer"))
                 }
             }
             Spacer(modifier = Modifier.size(16.dp))
         }
 
         // Metadata rows
-        DetailRow("Archivo", rom.fileName)
-        DetailRow("Tamaño", formatFileSize(rom.fileSizeBytes))
-        rom.fileNameNoTags?.let { DetailRow("Nombre limpio", it) }
-        rom.fileExtension?.let { DetailRow("Extensión", it) }
-        if (rom.isMulti) DetailRow("Multi-archivo", "Sí (${rom.files.size} archivos)")
+        DetailRow(tr("game.info.file"), rom.fileName)
+        DetailRow(tr("game.info.size"), formatFileSize(rom.fileSizeBytes))
+        rom.fileNameNoTags?.let { DetailRow(tr("game.info.clean_name"), it) }
+        rom.fileExtension?.let { DetailRow(tr("game.info.extension"), it) }
+        if (rom.isMulti) DetailRow(tr("game.info.multi_file"), tr("game.info.multi_file_value", rom.files.size))
         rom.igdbId?.let { DetailRow("IGDB ID", it.toString()) }
 
         // Idiomas y géneros como chips visuales
@@ -1340,7 +1342,7 @@ private fun RomDetailSheet(
                             modifier = Modifier.size(20.dp),
                         )
                         Text(
-                            "  Descargado",
+                            "  " + tr("common.downloaded"),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.secondary,
                         )
@@ -1358,7 +1360,7 @@ private fun RomDetailSheet(
                             contentDescription = null,
                             modifier = Modifier.size(20.dp),
                         )
-                        Text("  Eliminar descarga")
+                        Text("  " + tr("game.delete_download"))
                     }
                     // ── Mover entre almacenamientos (modo dos rutas) ─────
                     // Solo para juegos descargados con el modo dual activo.
@@ -1378,9 +1380,9 @@ private fun RomDetailSheet(
                                 )
                             }
                             Text(
-                                if (isMoving) "  Moviendo…"
-                                else if (isOnSd) "  Mover a memoria interna"
-                                else "  Mover a tarjeta SD"
+                                if (isMoving) "  " + tr("android.library.moving")
+                                else if (isOnSd) "  " + tr("android.library.move_to_internal")
+                                else "  " + tr("android.library.move_to_sd")
                             )
                         }
                         // Barra de progreso de la copia (bytes + %)
@@ -1424,7 +1426,7 @@ private fun RomDetailSheet(
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     Text(
-                        "  Descargando...",
+                        "  " + tr("android.library.downloading"),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1436,7 +1438,7 @@ private fun RomDetailSheet(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Text("  Descargar")
+                    Text("  " + tr("common.download"))
                 }
             }
         }
@@ -1450,7 +1452,7 @@ private fun RomDetailSheet(
             Spacer(modifier = Modifier.size(16.dp))
 
             Text(
-                "Sincronización de partidas",
+                tr("common.save_sync"),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -1465,12 +1467,12 @@ private fun RomDetailSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Excluir de la sincronización",
+                        tr("game.sync.exclude"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        "Las partidas de este juego no se subirán ni descargarán.",
+                        tr("android.library.sync_exclude_hint"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1491,14 +1493,14 @@ private fun RomDetailSheet(
                 }
 
                 Text(
-                    "Ubicación de las partidas",
+                    tr("android.library.saves_location"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(modifier = Modifier.size(4.dp))
                 Text(
-                    if (hasOverride) "Ruta personalizada para este juego"
-                    else "Heredada de la plataforma",
+                    if (hasOverride) tr("android.library.saves_path_custom")
+                    else tr("android.library.saves_path_inherited"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1506,8 +1508,8 @@ private fun RomDetailSheet(
                 androidx.compose.material3.OutlinedTextField(
                     value = manualPath,
                     onValueChange = { manualPath = it },
-                    label = { Text("Ruta de saves") },
-                    placeholder = { Text("/data/data/com.juego/files") },
+                    label = { Text(tr("android.library.saves_path_label")) },
+                    placeholder = { Text(tr("android.library.saves_path_placeholder")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -1517,7 +1519,7 @@ private fun RomDetailSheet(
                         ) {
                             Icon(
                                 Icons.Filled.Folder,
-                                contentDescription = "Seleccionar carpeta",
+                                contentDescription = tr("common.select_folder"),
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -1538,25 +1540,24 @@ private fun RomDetailSheet(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Seleccionar carpeta")
+                        Text(tr("common.select_folder"))
                     }
                     if (manualPath != displayedPath) {
                         androidx.compose.material3.Button(
                             onClick = { onSavesPathOverrideChange(manualPath.trim()) },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Guardar ruta")
+                            Text(tr("game.sync.save_path"))
                         }
                     } else if (hasOverride) {
                         TextButton(onClick = { onSavesPathOverrideChange(null) }) {
-                            Text("Restablecer")
+                            Text(tr("game.sync.reset"))
                         }
                     }
                 }
                 Spacer(modifier = Modifier.size(4.dp))
                 Text(
-                    "Puedes escribir la ruta a mano (ej. /data/data/paquete en " +
-                        "teléfonos rooteados) o usar el explorador.",
+                    tr("android.library.saves_path_hint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1572,11 +1573,11 @@ private fun RomDetailSheet(
             if (backups.isNotEmpty()) {
                 Spacer(modifier = Modifier.size(16.dp))
                 Text(
-                    "Copias de seguridad (${backups.size})",
+                    tr("game.backups.title", backups.size),
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    "Se guardan automáticamente antes de que un sync sobrescriba un save de este juego.",
+                    tr("game.backups.hint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1599,7 +1600,7 @@ private fun RomDetailSheet(
                                 "${
                                     java.text.SimpleDateFormat(
                                         "d MMM HH:mm",
-                                        java.util.Locale("es", "ES"),
+                                        java.util.Locale.getDefault(),
                                     ).format(java.util.Date(v.timestamp))
                                 } · ${formatFileSize(v.sizeBytes)}",
                                 style = MaterialTheme.typography.labelSmall,
@@ -1615,7 +1616,7 @@ private fun RomDetailSheet(
                                     restoring = false
                                 }
                             },
-                        ) { Text(if (restoring) "…" else "Restaurar") }
+                        ) { Text(if (restoring) "…" else tr("game.backups.restore")) }
                     }
                 }
             }
@@ -1684,7 +1685,7 @@ private fun ScreenshotViewerDialog(
                 var zoomed by remember(page) { mutableStateOf(false) }
                 AsyncImage(
                     model = screenshots[page],
-                    contentDescription = "Captura ${page + 1}",
+                    contentDescription = tr("android.library.screenshot_n", page + 1),
                     contentScale = if (zoomed) ContentScale.FillBounds else ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxSize()
@@ -1710,7 +1711,7 @@ private fun ScreenshotViewerDialog(
             ) {
                 Icon(
                     Icons.Filled.Close,
-                    contentDescription = "Cerrar",
+                    contentDescription = tr("game.viewer.close"),
                     tint = Color.White,
                 )
             }

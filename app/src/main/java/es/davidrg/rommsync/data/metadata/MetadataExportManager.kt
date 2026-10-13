@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
@@ -84,7 +85,7 @@ class MetadataExportManager(private val context: Context) {
                         MetadataExportWorker.KEY_ENTRIES, 0
                     ),
                 )
-                WorkInfo.State.FAILED -> ExportState.Failed("Error en exportación")
+                WorkInfo.State.FAILED -> ExportState.Failed(tr("android.metadata.export_failed"))
                 WorkInfo.State.ENQUEUED -> ExportState.Pending
                 else -> ExportState.Idle
             }

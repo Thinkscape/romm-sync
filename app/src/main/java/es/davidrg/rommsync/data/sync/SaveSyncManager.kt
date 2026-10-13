@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -138,6 +139,10 @@ class SaveSyncManager(
                 WorkInfo.State.RUNNING -> SyncState.Running
                 WorkInfo.State.SUCCEEDED -> {
                     val message = info.outputData.getString(SaveSyncWorker.KEY_MESSAGE) ?: ""
+                    // Señales explícitas del resultado: la UI no debe deducir el
+                    // estado leyendo el texto del mensaje (es traducible).
+                    val allSynced = info.outputData.getBoolean(SaveSyncWorker.KEY_ALL_SYNCED, false)
+                    val hasWarnings = info.outputData.getBoolean(SaveSyncWorker.KEY_HAS_WARNINGS, false)
                     val conflictsJson = info.outputData.getString(SaveSyncWorker.KEY_CONFLICTS_JSON)
                     if (conflictsJson != null) {
                         kotlinx.coroutines.runBlocking {
@@ -150,10 +155,10 @@ class SaveSyncManager(
                             SettingsDataStore(context).setLastSyncFailedJson(failedJson)
                         }
                     }
-                    SyncState.Success(message)
+                    SyncState.Success(message, allSynced = allSynced, hasWarnings = hasWarnings)
                 }
                 WorkInfo.State.FAILED -> {
-                    val message = info.outputData.getString(SaveSyncWorker.KEY_MESSAGE) ?: "Error"
+                    val message = info.outputData.getString(SaveSyncWorker.KEY_MESSAGE) ?: tr("common.error")
                     SyncState.Failed(message)
                 }
                 WorkInfo.State.ENQUEUED -> SyncState.Pending
@@ -181,6 +186,12 @@ sealed class SyncState {
     data object Idle : SyncState()
     data object Pending : SyncState()
     data object Running : SyncState()
-    data class Success(val message: String) : SyncState()
+    data class Success(
+        val message: String,
+        /** No hubo nada que hacer (ni subidas, ni bajadas, ni fallos): "todo al día". */
+        val allSynced: Boolean = false,
+        /** El resultado trae avisos (p.ej. rutas de saves ilegibles). */
+        val hasWarnings: Boolean = false,
+    ) : SyncState()
     data class Failed(val message: String) : SyncState()
 }

@@ -5,6 +5,7 @@ import okhttp3.Request
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import es.davidrg.rommsync.BuildConfig
+import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -56,24 +57,24 @@ class AppUpdateChecker(
             okHttpClient.newCall(request).execute()
         } catch (e: Exception) {
             return@withContext UpdateCheckResult.Error(
-                "Sin conexión con GitHub: ${e.message ?: "error de red"}",
+                tr("android.update.no_connection", e.message ?: tr("android.update.network_error")),
             )
         }
 
         response.use { resp ->
             if (!resp.isSuccessful) {
                 return@withContext UpdateCheckResult.Error(
-                    "GitHub respondió ${resp.code}. Revisa tu conexión.",
+                    tr("android.update.github_response", resp.code),
                 )
             }
             val body = resp.body?.string() ?: return@withContext UpdateCheckResult.Error(
-                "Respuesta vacía de GitHub",
+                tr("android.update.empty_response"),
             )
             val release = try {
                 moshi.adapter(GitHubReleaseDto::class.java).fromJson(body)
             } catch (e: Exception) {
-                return@withContext UpdateCheckResult.Error("Respuesta no válida de GitHub")
-            } ?: return@withContext UpdateCheckResult.Error("Respuesta no válida de GitHub")
+                return@withContext UpdateCheckResult.Error(tr("android.update.invalid_response"))
+            } ?: return@withContext UpdateCheckResult.Error(tr("android.update.invalid_response"))
 
             val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
             val currentVersion = BuildConfig.VERSION_NAME

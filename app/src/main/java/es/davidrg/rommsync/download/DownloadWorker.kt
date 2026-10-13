@@ -15,6 +15,7 @@ import androidx.work.workDataOf
 import es.davidrg.rommsync.data.local.RomSyncDatabase
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import es.davidrg.rommsync.data.local.entity.DownloadedRomEntity
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.download.PathMapper
@@ -94,7 +95,7 @@ class DownloadWorker(
                 KEY_ROM_NAME to romName,
                 KEY_FILE_NAME to fileName,
                 KEY_PLATFORM_SLUG to platformSlug,
-                KEY_ERROR_MESSAGE to "No queda espacio en el almacenamiento",
+                KEY_ERROR_MESSAGE to tr("android.downloads.error_no_space"),
             ))
         }
 
@@ -131,7 +132,7 @@ class DownloadWorker(
                         KEY_ROM_NAME to romName,
                         KEY_FILE_NAME to fileName,
                         KEY_PLATFORM_SLUG to platformSlug,
-                        KEY_ERROR_MESSAGE to "Error de autenticación (HTTP ${e.code()})",
+                        KEY_ERROR_MESSAGE to tr("android.downloads.error_auth", e.code()),
                     ))
                 }
                 404 -> {
@@ -140,7 +141,7 @@ class DownloadWorker(
                         KEY_ROM_NAME to romName,
                         KEY_FILE_NAME to fileName,
                         KEY_PLATFORM_SLUG to platformSlug,
-                        KEY_ERROR_MESSAGE to "Archivo no encontrado en el servidor (404)",
+                        KEY_ERROR_MESSAGE to tr("android.downloads.error_not_found"),
                     ))
                 }
                 in 500..599 -> {
@@ -149,7 +150,7 @@ class DownloadWorker(
                         KEY_ROM_NAME to romName,
                         KEY_FILE_NAME to fileName,
                         KEY_PLATFORM_SLUG to platformSlug,
-                        KEY_ERROR_MESSAGE to "Error del servidor (HTTP ${e.code()})",
+                        KEY_ERROR_MESSAGE to tr("android.downloads.error_server", e.code()),
                     ))
                 }
                 else -> {
@@ -158,7 +159,7 @@ class DownloadWorker(
                         KEY_ROM_NAME to romName,
                         KEY_FILE_NAME to fileName,
                         KEY_PLATFORM_SLUG to platformSlug,
-                        KEY_ERROR_MESSAGE to "Error HTTP ${e.code()}",
+                        KEY_ERROR_MESSAGE to tr("download.http_error", e.code()),
                     ))
                 }
             }
@@ -168,7 +169,10 @@ class DownloadWorker(
                 KEY_ROM_NAME to romName,
                 KEY_FILE_NAME to fileName,
                 KEY_PLATFORM_SLUG to platformSlug,
-                KEY_ERROR_MESSAGE to "Error de red: ${e.message ?: "conexión interrumpida"}",
+                KEY_ERROR_MESSAGE to tr(
+                    "android.downloads.error_network",
+                    e.message ?: tr("android.downloads.connection_interrupted"),
+                ),
             ))
         } catch (e: Exception) {
             Log.w(TAG, "Unexpected error downloading '$romName'", e)
@@ -176,7 +180,10 @@ class DownloadWorker(
                 KEY_ROM_NAME to romName,
                 KEY_FILE_NAME to fileName,
                 KEY_PLATFORM_SLUG to platformSlug,
-                KEY_ERROR_MESSAGE to "Error inesperado: ${e.message ?: "desconocido"}",
+                KEY_ERROR_MESSAGE to tr(
+                    "android.downloads.error_unexpected",
+                    e.message ?: tr("android.downloads.unknown_reason"),
+                ),
             ))
         }
     }
@@ -229,7 +236,7 @@ class DownloadWorker(
                             KEY_ROM_NAME to romName,
                             KEY_FILE_NAME to fileName,
                             KEY_PLATFORM_SLUG to platformSlug,
-                            KEY_ERROR_MESSAGE to "Espacio insuficiente: faltan ${formatBytes(missing)}",
+                            KEY_ERROR_MESSAGE to tr("android.downloads.error_insufficient_space", formatBytes(missing)),
                         ))
                     }
                     SpaceCheck.LOW_SPACE -> {
@@ -265,7 +272,7 @@ class DownloadWorker(
                     wasZipStream = true
                 }
                 else -> {
-                    val body = response.body() ?: throw IOException("Respuesta sin cuerpo (HTTP ${response.code()})")
+                    val body = response.body() ?: throw IOException(tr("android.downloads.error_empty_body", response.code()))
                     // Total esperado: bytes ya en disco + los que faltan (206)
                     // o Content-Length completo (200).
                     val offset = if (isPartialResponse) partialBytes else 0L
@@ -316,7 +323,7 @@ class DownloadWorker(
                             romId = romId, romName = romName,
                             fileName = fileName, platformSlug = platformSlug,
                             downloadedBytes = targetFile.length(), totalBytes = 0L,
-                            progressText = "Verificando integridad…",
+                            progressText = tr("android.downloads.verifying_integrity"),
                         )
                         withContext(Dispatchers.IO) {
                             computeFileHash(targetFile, hashAlgo)
@@ -329,7 +336,7 @@ class DownloadWorker(
                             KEY_ROM_NAME to romName,
                             KEY_FILE_NAME to fileName,
                             KEY_PLATFORM_SLUG to platformSlug,
-                            KEY_ERROR_MESSAGE to "Descarga corrupta (hash no coincide) — reintenta",
+                            KEY_ERROR_MESSAGE to tr("android.downloads.error_corrupt"),
                         ))
                     } else {
                         Log.i(TAG, "Hash OK for '$romName' ($hashAlgo)")
@@ -445,10 +452,10 @@ class DownloadWorker(
                     append(formatSpeed(speedBps))
                 }
             }
-        }.ifEmpty { "Descargando…" }
+        }.ifEmpty { tr("common.downloading") }
 
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Descargando $romName")
+            .setContentTitle(tr("app.snackbar.downloading", romName))
             .setContentText(detail)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
@@ -564,10 +571,10 @@ class DownloadWorker(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "Descargas",
+                tr("nav.downloads"),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Progreso de descarga de ROMs"
+                description = tr("android.downloads.channel_description")
             }
             val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
                 as NotificationManager

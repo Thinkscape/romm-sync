@@ -2,6 +2,7 @@ package es.davidrg.rommsync.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.repository.RomRepository
 import es.davidrg.rommsync.domain.model.ApiResult
 import es.davidrg.rommsync.domain.model.ErrorKind
@@ -121,9 +122,9 @@ class PlatformsViewModel(
  * Maps [ErrorKind] to user-facing Spanish messages.
  */
 private fun ErrorKind.toUserMessage(): String = when (this) {
-    ErrorKind.NETWORK -> "Sin conexión al servidor"
-    ErrorKind.AUTH -> "API Key inválida o sin permisos"
-    ErrorKind.NOT_FOUND -> "No encontrado"
-    ErrorKind.SERVER -> "Error del servidor (500)"
-    ErrorKind.UNKNOWN -> "Error desconocido"
+    ErrorKind.NETWORK -> tr("android.platforms.error.network")
+    ErrorKind.AUTH -> tr("android.platforms.error.auth")
+    ErrorKind.NOT_FOUND -> tr("android.platforms.error.not_found")
+    ErrorKind.SERVER -> tr("android.platforms.error.server")
+    ErrorKind.UNKNOWN -> tr("android.platforms.error.unknown")
 }

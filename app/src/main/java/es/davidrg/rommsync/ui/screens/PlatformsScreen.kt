@@ -63,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import es.davidrg.rommsync.RomMSyncApplication
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.domain.model.Platform
 import es.davidrg.rommsync.ui.viewmodel.PlatformsViewModel
 
@@ -109,7 +110,7 @@ fun PlatformsScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Plataformas") },
+                title = { Text(tr("nav.platforms")) },
                 modifier = Modifier.height(if (compact) 48.dp else 64.dp),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -126,7 +127,7 @@ fun PlatformsScreen() {
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text(if (allVisible) "Ninguna" else "Todas")
+                            Text(if (allVisible) tr("android.platforms.none") else tr("android.platforms.all"))
                         }
                     }
                 },
@@ -142,8 +143,8 @@ fun PlatformsScreen() {
             if (!settings.isConfigured) {
                 es.davidrg.rommsync.ui.components.EmptyState(
                     icon = Icons.Outlined.Storage,
-                    title = "Sin servidor configurado",
-                    description = "Configura el servidor en la pestaña Configuración para ver tus plataformas.",
+                    title = tr("common.no_server_configured"),
+                    description = tr("android.platforms.empty.no_server"),
                 )
                 return@Column
             }
@@ -167,12 +168,12 @@ fun PlatformsScreen() {
                 ) {
                     Column {
                         Text(
-                            "${platforms.count { it.visible }} de ${platforms.size}",
+                            tr("android.platforms.visible_count", platforms.count { it.visible }, platforms.size),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            "plataformas visibles",
+                            tr("android.platforms.visible_label"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -195,7 +196,7 @@ fun PlatformsScreen() {
                             )
                         }
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Actualizar")
+                        Text(tr("platforms.refresh"))
                     }
                 }
             }
@@ -225,7 +226,7 @@ fun PlatformsScreen() {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "${stats.totalRoms} ROMs locales",
+                            tr("platforms.local_roms", stats.totalRoms),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -236,7 +237,7 @@ fun PlatformsScreen() {
                             )
                             Icon(
                                 if (statsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = if (statsExpanded) "Ocultar detalle" else "Ver detalle",
+                                contentDescription = if (statsExpanded) tr("android.platforms.hide_detail") else tr("android.platforms.show_detail"),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -279,7 +280,7 @@ fun PlatformsScreen() {
                                     modifier = Modifier.padding(top = 2.dp),
                                 ) {
                                     Text(
-                                        "Ver más (${stats.byPlatform.size - 5} plataformas)",
+                                        tr("android.platforms.show_more_platforms", stats.byPlatform.size - 5),
                                     )
                                 }
                             }
@@ -299,7 +300,7 @@ fun PlatformsScreen() {
                     ) {
                         Column(modifier = Modifier.padding(horizontal = 24.dp)) {
                             Text(
-                                "ROMs locales por plataforma",
+                                tr("android.platforms.local_roms_by_platform"),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
@@ -472,7 +473,7 @@ private fun PlatformCard(
                     IconButton(onClick = { expanded = !expanded }) {
                         Icon(
                             if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = "Configurar sync",
+                            contentDescription = tr("android.platforms.configure_sync"),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -496,13 +497,13 @@ private fun PlatformCard(
                 // ── Destino de descarga por defecto (modo dos rutas) ────
                 if (dualPathsEnabled) {
                     Text(
-                        "Descargas",
+                        tr("nav.downloads"),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Dónde descargar los juegos de esta plataforma por defecto",
+                        tr("android.platforms.downloads_hint"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -522,10 +523,10 @@ private fun PlatformCard(
                     // Ruta efectiva según la selección (feedback visual)
                     val effectivePath = when (platform.downloadStorage) {
                         es.davidrg.rommsync.domain.model.PlatformDownloadStorage.INTERNAL ->
-                            "Ruta interna"
+                            tr("android.platforms.storage_internal")
                         es.davidrg.rommsync.domain.model.PlatformDownloadStorage.SD ->
                             secondaryRomsPath
-                        else -> "Se preguntará al descargar"
+                        else -> tr("android.platforms.storage_ask")
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -538,7 +539,7 @@ private fun PlatformCard(
 
                 if (syncEnabled) {
                 Text(
-                    "Configuración de sync",
+                    tr("android.platforms.sync_config"),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -576,13 +577,13 @@ private fun PlatformCard(
                 }
 
                 Text(
-                    "Ruta de saves",
+                    tr("android.platforms.saves_path"),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    if (hasOverride) "Ruta personalizada" else "Ruta por defecto",
+                    if (hasOverride) tr("android.platforms.saves_path_custom") else tr("android.platforms.saves_path_default"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -590,8 +591,8 @@ private fun PlatformCard(
                 OutlinedTextField(
                     value = manualPath,
                     onValueChange = { manualPath = it },
-                    label = { Text("Ruta de saves") },
-                    placeholder = { Text("/data/data/com.juego/files") },
+                    label = { Text(tr("android.platforms.saves_path")) },
+                    placeholder = { Text(tr("android.platforms.saves_path_placeholder")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -599,7 +600,7 @@ private fun PlatformCard(
                         IconButton(onClick = { showFolderPicker = true }) {
                             Icon(
                                 Icons.Filled.Folder,
-                                contentDescription = "Seleccionar carpeta",
+                                contentDescription = tr("common.select_folder"),
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -620,20 +621,20 @@ private fun PlatformCard(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Seleccionar carpeta")
+                        Text(tr("common.select_folder"))
                     }
                     if (manualPath != displayedPath) {
                         Button(
                             onClick = { onSavesPathChange(platform.id, manualPath.trim()) },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Guardar ruta")
+                            Text(tr("game.sync.save_path"))
                         }
                     } else if (hasOverride) {
                         TextButton(
                             onClick = { onSavesPathChange(platform.id, null) },
                         ) {
-                            Text("Restablecer")
+                            Text(tr("game.sync.reset"))
                         }
                     }
                 }
@@ -656,22 +657,20 @@ private fun PlatformCard(
                 if (esdeEnabled || retroHraiEnabled) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    if (esdeEnabled) "Exportar a ES-DE" else "Exportar a RetroHRAI",
+                    if (esdeEnabled) tr("android.platforms.export_esde") else tr("android.platforms.export_retrohrai"),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 if (esdeEnabled) {
                     Text(
-                        "Descarga carátulas, screenshots, vídeos y manuales de RomM " +
-                            "y actualiza el gamelist.xml de esta plataforma.",
+                        tr("android.platforms.export_esde_desc"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     Text(
-                        "Descarga carátulas, screenshots, vídeos y manuales de RomM " +
-                            "a la estructura de carpetas de RetroHRAI.",
+                        tr("android.platforms.export_retrohrai_desc"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -706,7 +705,7 @@ private fun PlatformCard(
                         )
                         Spacer(modifier = Modifier.size(10.dp))
                         Text(
-                            "Exportar también a RetroHRAI",
+                            tr("android.platforms.export_retrohrai_too"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -739,7 +738,7 @@ private fun PlatformCard(
                         )
                     }
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text(if (isExporting) "Exportando..." else "Exportar metadatos")
+                    Text(if (isExporting) tr("android.platforms.exporting") else tr("android.platforms.export_metadata"))
                 }
 
                 // Feedback de resultado
@@ -747,7 +746,7 @@ private fun PlatformCard(
                     is es.davidrg.rommsync.data.metadata.ExportState.Success -> {
                         val s = exportState as es.davidrg.rommsync.data.metadata.ExportState.Success
                         Text(
-                            "✓ ${s.mediaDownloaded} archivos · ${s.entriesCount} juegos en gamelist",
+                            tr("android.platforms.export_success", s.mediaDownloaded, s.entriesCount),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.padding(top = 4.dp),
@@ -755,7 +754,7 @@ private fun PlatformCard(
                     }
                     is es.davidrg.rommsync.data.metadata.ExportState.Failed -> {
                         Text(
-                            "Error en la exportación",
+                            tr("android.platforms.export_error"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 4.dp),

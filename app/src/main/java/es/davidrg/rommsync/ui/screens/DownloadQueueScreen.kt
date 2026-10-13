@@ -55,6 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import es.davidrg.rommsync.RomMSyncApplication
+import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.domain.model.DownloadTask
 import es.davidrg.rommsync.ui.viewmodel.DownloadQueueViewModel
 
@@ -82,11 +83,11 @@ fun DownloadQueueScreen() {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Cola de descargas")
+                        Text(tr("android.downloads.queue_title"))
                         if (downloads.isNotEmpty()) {
                             Text(
-                                text = if (activeCount > 0) "$activeCount en progreso"
-                                       else "${downloads.size} en la lista",
+                                text = if (activeCount > 0) tr("downloads.in_progress", activeCount)
+                                       else tr("downloads.in_list", downloads.size),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -108,7 +109,7 @@ fun DownloadQueueScreen() {
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("Limpiar")
+                            Text(tr("android.downloads.clear_completed"))
                         }
                     }
                     if (hasRunning) {
@@ -117,7 +118,7 @@ fun DownloadQueueScreen() {
                             colors = ButtonDefaults.textButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error,
                             ),
-                        ) { Text("Cancelar todo") }
+                        ) { Text(tr("downloads.cancel_all")) }
                     }
                 },
             )
@@ -154,8 +155,8 @@ private fun EmptyDownloads(modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         es.davidrg.rommsync.ui.components.EmptyState(
             icon = Icons.Outlined.CloudDownload,
-            title = "No hay descargas en cola",
-            description = "Las ROMs que descargues aparecerán aquí",
+            title = tr("downloads.empty.title"),
+            description = tr("android.downloads.empty_description"),
         )
     }
 }
@@ -210,7 +211,7 @@ private fun DownloadCard(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            task.progressText ?: "Empaquetando (mod_zip)…",
+                            task.progressText ?: tr("android.downloads.packaging_zip"),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -247,14 +248,14 @@ private fun DownloadCard(
                 } else if (task.isCompleted) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Descarga completada",
+                        tr("common.download_completed"),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.secondary,
                     )
                 } else if (task.isFailed) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = task.errorMessage ?: "Error en la descarga",
+                        text = task.errorMessage ?: tr("android.downloads.error"),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.error,
                         maxLines = 2,
@@ -268,7 +269,7 @@ private fun DownloadCard(
                 IconButton(onClick = onCancel) {
                     Icon(
                         Icons.Filled.Cancel,
-                        contentDescription = "Cancelar",
+                        contentDescription = tr("common.cancel"),
                         tint = MaterialTheme.colorScheme.error,
                     )
                 }
@@ -280,7 +281,7 @@ private fun DownloadCard(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.size(4.dp))
-                    Text("Reintentar")
+                    Text(tr("downloads.retry"))
                 }
             }
         }
@@ -319,7 +320,7 @@ private fun StatusBadge(task: DownloadTask) {
             task.isCompleted -> {
                 Icon(
                     Icons.Filled.CheckCircle,
-                    contentDescription = "Completado",
+                    contentDescription = tr("android.downloads.completed"),
                     tint = fg,
                     modifier = Modifier.size(24.dp),
                 )
@@ -327,7 +328,7 @@ private fun StatusBadge(task: DownloadTask) {
             task.isFailed -> {
                 Icon(
                     Icons.Filled.ErrorOutline,
-                    contentDescription = "Error",
+                    contentDescription = tr("common.error"),
                     tint = fg,
                     modifier = Modifier.size(24.dp),
                 )

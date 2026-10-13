@@ -2,42 +2,44 @@
 
 # 🎮 RomM Sync — Android & Linux
 
-**Descarga y sincroniza tu biblioteca de [RomM](https://github.com/rommapp/romm) en Android y Linux.**
+🌐 **English** · [Español](README.es.md)
 
-Cliente multiplataforma para servidores RomM: explora tu biblioteca, descarga ROMs directamente a la estructura de carpetas de tu frontend favorito y mantiene las partidas guardadas sincronizadas entre todos tus dispositivos — portátil Android, Steam Deck, PC.
+**Download and sync your [RomM](https://github.com/rommapp/romm) library on Android and Linux.**
 
-- **Android** (Kotlin + Jetpack Compose): APK nativo, optimizado para consolas portátiles (Anbernic, Retroid Pocket...) con pantalla táctil: UI oscura, botones grandes y navegación pensada para dedos.
-- **Linux** (Compose Desktop): AppImage autocontenido para **x86_64** (SteamOS, Steam Deck, PCs) y **aarch64** (Raspberry Pi 5, handhelds ARM) con runtime Java incluido — nada que instalar.
+Cross-platform client for RomM servers: browse your library, download ROMs straight into the folder structure of your favorite frontend, and keep save files synced across all your devices — Android handheld, Steam Deck, PC.
+
+- **Android** (Kotlin + Jetpack Compose): native APK, optimized for handheld consoles (Anbernic, Retroid Pocket...) with a touchscreen: dark UI, large buttons and finger-friendly navigation.
+- **Linux** (Compose Desktop): self-contained AppImage for **x86_64** (SteamOS, Steam Deck, PCs) and **aarch64** (Raspberry Pi 5, ARM handhelds) with the Java runtime bundled in — nothing to install.
 
 </div>
 
 ---
 
-## 📥 Instalación
+## 📥 Installation
 
-### Opción A — Android (recomendado)
+### Option A — Android (recommended)
 
-1. Descarga `RomM-Sync-vX.Y.Z-android.apk` desde [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest).
-2. Configura tu servidor (ver abajo).
-3. En **Configuración → Actualizaciones**, pulsa *Buscar actualizaciones* cada vez que quieras comprobar si hay versión nueva. La app descarga el APK y lanza el instalador de Android — sin salir de la aplicación.
+1. Download `RomM-Sync-vX.Y.Z-android.apk` from [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest).
+2. Configure your server (see below).
+3. In **Settings → Updates**, tap *Check for updates* whenever you want to check for a new version. The app downloads the APK and launches the Android installer — without leaving the app.
 
-> ⚠️ La primera vez, Android pedirá conceder a RomM Sync el permiso **«Instalar apps desconocidas»**. Es el permiso estándar para auto-actualizarse cualquier app fuera de Play Store.
+> ⚠️ The first time, Android will ask you to grant RomM Sync the **"Install unknown apps"** permission. It is the standard permission for any app to self-update outside the Play Store.
 
-### Opción B — Linux (AppImage)
+### Option B — Linux (AppImage)
 
-1. Descarga el AppImage de tu arquitectura desde [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest):
-   - `RomM-Sync-vX.Y.Z-linux-x86_64.AppImage` — SteamOS, Steam Deck, la mayoría de PCs
-   - `RomM-Sync-vX.Y.Z-linux-aarch64.AppImage` — Raspberry Pi 5, handhelds ARM
-2. Dale permisos de ejecución y ejecútalo:
+1. Download the AppImage for your architecture from [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest):
+   - `RomM-Sync-vX.Y.Z-linux-x86_64.AppImage` — SteamOS, Steam Deck, most PCs
+   - `RomM-Sync-vX.Y.Z-linux-aarch64.AppImage` — Raspberry Pi 5, ARM handhelds
+2. Give it execute permission and run it:
    ```bash
    chmod +x RomM-Sync-v*-linux-*.AppImage
    ./RomM-Sync-v*-linux-x86_64.AppImage
    ```
-3. La primera vez pide URL del servidor, API Key y carpeta de ROMs; se guarda para la siguiente.
+3. The first time it asks for the server URL, API Key and ROMs folder; it is saved for next time.
 
-> El AppImage lleva el runtime Java jlinkeado dentro (~70 MB): no necesitas instalar Java ni nada más.
+> The AppImage bundles the jlinked Java runtime inside (~70 MB): you don't need to install Java or anything else.
 
-### Opción C — Compilar desde código
+### Option C — Build from source
 
 ```bash
 git clone https://github.com/davidadrianrg/romm-sync.git
@@ -46,43 +48,44 @@ cd romm-sync
 # APK → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Requisitos: JDK 17 y Android SDK (API 35). Para el desktop: solo JDK 17 (`./gradlew :desktop:packageReleaseUberJarForCurrentOS`). Para firmar tu propio release, crea `keystore.properties` en la raíz (está en `.gitignore`):
+Requirements: JDK 17 and Android SDK (API 35). For the desktop: just JDK 17 (`./gradlew :desktop:packageReleaseUberJarForCurrentOS`). To sign your own release, create `keystore.properties` at the root (it's in `.gitignore`):
 
 ```properties
-storeFile=/ruta/a/tu.keystore
+storeFile=/path/to/your.keystore
 storePassword=***
 keyAlias=***
 keyPassword=***
 ```
 
-## ⚙️ Configuración inicial (2 minutos)
+## ⚙️ Initial setup (2 minutes)
 
-| Qué | Valor |
+| What | Value |
 |---|---|
-| **URL del servidor** | `https://romm.tudominio.com` (tu instancia RomM 4.9+ para sync) |
-| **API Key** | Token `rmm_...` desde *RomM → User → API Keys* |
-| **Directorio de ROMs** | `/storage/emulated/0/ROMs` (o tu microSD) |
+| **Server URL** | `https://romm.yourdomain.com` (your RomM 4.9+ instance for sync) |
+| **API Key** | `rmm_...` token from *RomM → User → API Keys* |
+| **ROMs directory** | `/storage/emulated/0/ROMs` (or your microSD) |
 
-La app pide el permiso **«Acceso a todos los archivos»** — lo necesita para escribir las ROMs en las carpetas que espera tu emulador/frontend, sin copiar ni mover nada manualmente.
+The app requests the **"All files access"** permission — it needs it to write ROMs into the folders your emulator/frontend expects, without copying or moving anything manually.
 
 <details>
-<summary><b>¿Por qué API Key y no usuario/contraseña?</b></summary>
+<summary><b>Why an API Key and not username/password?</b></summary>
 
-RomM admite login OAuth/OIDC tras proxys (Authentik, Authelia...), que suele romper clientes no-web con redirecciones y tokens CSRF. La API Key es un token largo por usuario que funciona siempre, sea cual sea tu setup de autenticación web.
+RomM supports OAuth/OIDC login behind proxies (Authentik, Authelia...), which usually breaks non-web clients with redirects and CSRF tokens. The API Key is a long per-user token that always works, whatever your web authentication setup.
 </details>
 
-## ✨ Qué hace la app
+## ✨ What the app does
 
-- **📚 Biblioteca** — Navega por tu servidor RomM con carátulas, búsqueda y filtros (todos / faltantes / descargados). Detecta juegos ya presentes en disco con *Escanear biblioteca*.
-- **⬇️ Descargas** — Cola con descargas paralelas configurables (1–5), reanudación automática si se corta la red, verificación de integridad por hash y aviso de espacio insuficiente. Opción *solo WiFi* para no gastar datos.
-- **💾 Sincronización de saves** — Tus partidas guardadas siempre al día en todos los dispositivos, con el [Device Sync Protocol](https://docs.romm.app/latest/developers/device-sync-protocol/) de RomM (v4.9+): sube lo que cambió en el portátil, bájate lo que jugaste en el PC. Resuelve conflictos explícitamente en vez de sobrescribir.
-- **🗂️ Exportación de metadatos** — Genera los `gamelist.xml` de ES-DE o copia la media (covers, fanart, logos, screenshots) a la estructura de RetroHRAI.
-- **🔄 Auto-actualización** — Comprueba, descarga e instala nuevas versiones desde GitHub Releases sin desinstalar nada (ver Instalación).
-- **🖥️ Linux a la par de Android** — La app de escritorio comparte tema ("Midnight Arcade"), biblioteca con carátulas y detalle de juego completo (screenshots, metadatos IGDB), cola de descargas con cancelar/reintentar/reanudar, sync de saves con resolución de conflictos y exportación ES-DE con merge no destructivo.
+- **📚 Library** — Browse your RomM server with cover art, search and filters (all / missing / downloaded). Detects games already present on disk with *Scan library*.
+- **⬇️ Downloads** — Queue with configurable parallel downloads (1–5), automatic resume if the network drops, hash-based integrity verification and an out-of-space warning. *WiFi-only* option to avoid using data.
+- **💾 Save sync** — Your save files always up to date on every device, using RomM's [Device Sync Protocol](https://docs.romm.app/latest/developers/device-sync-protocol/) (v4.9+): upload what changed on the handheld, download what you played on the PC. Resolves conflicts explicitly instead of overwriting.
+- **🗂️ Metadata export** — Generates ES-DE `gamelist.xml` files or copies the media (covers, fanart, logos, screenshots) into the RetroHRAI structure.
+- **🔄 Auto-update** — Checks, downloads and installs new versions from GitHub Releases without uninstalling anything (see Installation).
+- **🖥️ Linux on par with Android** — The desktop app shares the theme ("Midnight Arcade"), library with cover art and full game details (screenshots, IGDB metadata), download queue with cancel/retry/resume, save sync with conflict resolution and ES-DE export with non-destructive merge.
+- **🌐 English & Spanish UI** — The interface is available in both English and Spanish.
 
-### Emuladores soportados para sync de saves
+### Emulators supported for save sync
 
-| Plataforma | Emulador (por defecto) |
+| Platform | Emulator (default) |
 |---|---|
 | Retro (NES–N64, GBA, PSX...) | RetroArch |
 | Nintendo DS | melonDS |
@@ -92,74 +95,75 @@ RomM admite login OAuth/OIDC tras proxys (Authentik, Authelia...), que suele rom
 | 3DS | Azahar |
 | Wii U | Cemu |
 | Switch | Eden |
-| Juegos nativos Android | ruta configurable por juego |
+| Native Android games | per-game configurable path |
 
-> 💡 PS2 requiere activar **Folder Memory Card** en el emulador para sincronizar por juego.
+> 💡 PS2 requires enabling **Folder Memory Card** in the emulator to sync per game.
 
-## 🖼️ Permisos que usa y por qué
+## 🖼️ Permissions it uses and why
 
-| Permiso | Motivo |
+| Permission | Reason |
 |---|---|
-| Acceso a todos los archivos | Escribir ROMs/metadata en las carpetas que leen los emuladores |
-| Instalar apps desconocidas | Solo si usas la auto-actualización: instala el APK que ella misma descarga |
-| Notificaciones | Progreso de descargas y sincronización en segundo plano |
-| Ignorar optimización de batería | Que la sincronización periódica no la mate el sistema |
-| Internet | Hablar con tu servidor RomM y con GitHub (comprobar updates) |
+| All files access | Write ROMs/metadata into the folders the emulators read |
+| Install unknown apps | Only if you use auto-update: it installs the APK it downloads itself |
+| Notifications | Download progress and background sync |
+| Ignore battery optimization | So the periodic sync isn't killed by the system |
+| Internet | Talk to your RomM server and to GitHub (check for updates) |
 
-Sin telemetría, sin analytics, sin cuentas: tus datos van de tu dispositivo a **tu** servidor.
+No telemetry, no analytics, no accounts: your data goes from your device to **your** server.
 
-## 🏗️ Arquitectura (para contribuir)
+## 🏗️ Architecture (for contributors)
 
-Monorepo con tres módulos Gradle que comparten todo el código de negocio:
+Monorepo with three Gradle modules that share all the business logic:
 
 ```
-core/src/main/kotlin/es/davidrg/rommsync/core/   # JVM puro — compartido Android + Desktop
-├── remote/              # Retrofit + OkHttp (API RomM, Device Sync Protocol)
-├── sync/platform/       # Handlers de saves por emulador (RetroArch, melonDS, PS2, PS3, 3DS...)
-├── download/            # PathMapper (estructura de carpetas por plataforma)
-└── util/                # RootShell, lectura de cabeceras ROM...
+core/src/main/kotlin/es/davidrg/rommsync/core/   # Pure JVM — shared Android + Desktop
+├── remote/              # Retrofit + OkHttp (RomM API, Device Sync Protocol)
+├── sync/platform/       # Per-emulator save handlers (RetroArch, melonDS, PS2, PS3, 3DS...)
+├── download/            # PathMapper (per-platform folder structure)
+└── util/                # RootShell, ROM header reading...
 
 app/src/main/java/es/davidrg/rommsync/           # Android
-├── data/local/          # Room + DataStore (config persistente)
-├── data/repository/     # Puente remote ↔ cache
-├── data/metadata/       # Exportación gamelist.xml / media
-├── data/update/         # Auto-actualización desde GitHub Releases
-├── download/            # WorkManager + descarga con reanudación
+├── data/local/          # Room + DataStore (persistent config)
+├── data/repository/     # remote ↔ cache bridge
+├── data/metadata/       # gamelist.xml / media export
+├── data/update/         # Auto-update from GitHub Releases
+├── download/            # WorkManager + resumable download
 ├── ui/                  # Compose Material3 (screens/viewmodel/components)
-└── util/                # Permisos Android
+└── util/                # Android permissions
 
 desktop/src/main/kotlin/es/davidrg/rommsync/desktop/  # Linux (Compose Desktop)
-├── Main.kt / AppContent.kt   # UI (conexión, biblioteca, descargas, sync)
-├── DesktopSyncCoordinator.kt # Ciclo de sync sin Room/WorkManager
-├── DownloadEngine.kt         # Descarga stream→disco (fichero único + zip-stream)
-└── DesktopConfig.kt          # java.util.prefs (config persistente)
+├── Main.kt / AppContent.kt   # UI (connection, library, downloads, sync)
+├── DesktopSyncCoordinator.kt # Sync loop without Room/WorkManager
+├── DownloadEngine.kt         # Download stream→disk (single file + zip-stream)
+└── DesktopConfig.kt          # java.util.prefs (persistent config)
 ```
 
-- **Stack común**: Kotlin · Retrofit/OkHttp · Moshi · Coroutines
+- **Common stack**: Kotlin · Retrofit/OkHttp · Moshi · Coroutines
 - **Android**: Jetpack Compose (Material 3) · Room · WorkManager · DataStore · Coil
-- **Desktop**: Compose Desktop · AppImage (jlink runtime incluido)
-- **Idioma del código**: inglés en identificadores/logs; español en textos de UI.
-- **Tests**: `./gradlew test` (unit tests en `core/src/test` y `app/src/test`).
+- **Desktop**: Compose Desktop · AppImage (jlinked runtime included)
+- **UI languages**: the interface is available in English and Spanish.
+- **Code language**: English in identifiers/logs; UI texts are localized.
+- **Tests**: `./gradlew test` (unit tests in `core/src/test` and `app/src/test`).
 
 ## 🔁 CI/CD
 
-Cada push a `master`:
+Every push to `master`:
 
-1. **APK** (`.github/workflows/build-release.yml`): build firmado (R8) → GitHub Release como `RomM-Sync-vX.Y.Z-android.apk`.
-2. **AppImage** (`.github/workflows/build-appimage.yml`): build para **x86_64** y **aarch64** → `RomM-Sync-vX.Y.Z-linux-<arch>.AppImage`, adjuntos a la misma release que el APK.
+1. **APK** (`.github/workflows/build-release.yml`): signed build (R8) → GitHub Release as `RomM-Sync-vX.Y.Z-android.apk`.
+2. **AppImage** (`.github/workflows/build-appimage.yml`): build for **x86_64** and **aarch64** → `RomM-Sync-vX.Y.Z-linux-<arch>.AppImage`, attached to the same release as the APK.
 
-El tag y el `versionName` coinciden **exactamente** con `versionName` de `app/build.gradle.kts` (p. ej. `0.4.2` → `v0.4.2`); búmpalo ahí para publicar una versión nueva. El `versionCode` interno usa el `run_number` del workflow, que siempre crece (Android lo exige para actualizar sin desinstalar). Repetir una versión reemplaza su release.
+The tag and `versionName` match **exactly** the `versionName` in `app/build.gradle.kts` (e.g. `0.4.2` → `v0.4.2`); bump it there to publish a new version. The internal `versionCode` uses the workflow `run_number`, which always increases (Android requires it to update without uninstalling). Publishing the same version again replaces its release.
 
-El APK de release se firma con una clave fija (secrets `SIGNING_KEYSTORE_BASE64` y derivados) para que las actualizaciones se instalen sobre la versión anterior sin desinstalar. **Guarda copia del keystore**: si se pierde, los usuarios tendrían que desinstalar para actualizar.
+The release APK is signed with a fixed key (secrets `SIGNING_KEYSTORE_BASE64` and derivatives) so updates install over the previous version without uninstalling. **Keep a backup of the keystore**: if it is lost, users would have to uninstall in order to update.
 
-## 🤝 Contribuir
+## 🤝 Contributing
 
-1. Fork + rama (`feat/mi-cosa`).
-2. `./gradlew test` en verde.
-3. PR a `master` — CI debe pasar.
+1. Fork + branch (`feat/my-thing`).
+2. `./gradlew test` green.
+3. PR to `master` — CI must pass.
 
-Errores, ideas y PRs bienvenidos en [Issues](https://github.com/davidadrianrg/romm-sync/issues).
+Bugs, ideas and PRs welcome in [Issues](https://github.com/davidadrianrg/romm-sync/issues).
 
-## 📄 Licencia
+## 📄 License
 
 MIT

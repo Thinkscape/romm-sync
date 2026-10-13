@@ -2,6 +2,7 @@ package es.davidrg.rommsync.data.sync
 
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import es.davidrg.rommsync.core.i18n.tr
 
 /**
  * Tile de Ajustes Rápidos "Sincronizar saves": dispara un ciclo de sync
@@ -14,7 +15,7 @@ class SyncTileService : TileService() {
         super.onStartListening()
         qsTile?.apply {
             state = Tile.STATE_ACTIVE
-            subtitle = "Sincronizar"
+            subtitle = tr("android.tile.sync")
             updateTile()
         }
     }

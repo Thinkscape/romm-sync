@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,7 +71,7 @@ class ApkInstallHelper(
             okHttpClient.newCall(request).execute()
         } catch (e: Exception) {
             _downloadState.value = UpdateDownloadState.Error(
-                "Error de descarga: ${e.message ?: "error de red"}",
+                tr("android.update.download_error", e.message ?: tr("android.update.network_error")),
             )
             return@withContext
         }
@@ -78,12 +79,12 @@ class ApkInstallHelper(
         response.use { resp ->
             if (!resp.isSuccessful) {
                 _downloadState.value = UpdateDownloadState.Error(
-                    "El servidor devolvió ${resp.code} al descargar el APK",
+                    tr("android.update.server_error", resp.code),
                 )
                 return@withContext
             }
             val body = resp.body ?: run {
-                _downloadState.value = UpdateDownloadState.Error("Descarga vacía")
+                _downloadState.value = UpdateDownloadState.Error(tr("android.update.empty_download"))
                 return@withContext
             }
 
@@ -117,7 +118,7 @@ class ApkInstallHelper(
             } catch (e: Exception) {
                 target.delete()
                 _downloadState.value = UpdateDownloadState.Error(
-                    "No se pudo guardar el APK: ${e.message ?: "error de E/S"}",
+                    tr("android.update.save_apk_error", e.message ?: tr("android.update.io_error")),
                 )
             }
         }
@@ -145,7 +146,7 @@ class ApkInstallHelper(
                 InstallLaunchResult.NeedsPermission
             } catch (e: Exception) {
                 InstallLaunchResult.Error(
-                    "No se pudo abrir Ajustes para el permiso de instalación",
+                    tr("android.update.open_settings_error"),
                 )
             }
         }
@@ -158,7 +159,7 @@ class ApkInstallHelper(
                 apkFile,
             )
         } catch (e: Exception) {
-            return InstallLaunchResult.Error("No se pudo preparar el APK: ${e.message}")
+            return InstallLaunchResult.Error(tr("android.update.prepare_apk_error", e.message))
         }
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
@@ -171,7 +172,7 @@ class ApkInstallHelper(
             InstallLaunchResult.Started
         } catch (e: Exception) {
             InstallLaunchResult.Error(
-                "Ninguna app pudo abrir el instalador: ${e.message}",
+                tr("android.update.no_installer_app", e.message),
             )
         }
     }
