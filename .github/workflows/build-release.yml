@@ -5,7 +5,7 @@ name: Build & Release APK
 
 on:
   push:
-    branches: [master]
+    branches: [device-sync]
 
 concurrency:
   group: build-${{ github.ref }}
@@ -45,7 +45,7 @@ jobs:
       - name: Compute version
         id: version
         run: |
-          VERSION="$(grep -oP 'versionName = "\K[0-9]+\.[0-9]+\.[0-9]+' app/build.gradle.kts | head -1)"
+          VERSION="$(grep -oP 'versionName = "\K[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' app/build.gradle.kts | head -1)"
           if [ -z "$VERSION" ]; then
             echo "❌ Could not parse a MAJOR.MINOR.PATCH versionName from app/build.gradle.kts" >&2
             exit 1

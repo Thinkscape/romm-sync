@@ -9,8 +9,12 @@
 name: Build & Release AppImage
 
 on:
-  push:
-    branches: [master]
+  # Runs after the APK workflow has (re)created the release, so the
+  # AppImages are never attached to a release that is about to be deleted.
+  workflow_run:
+    workflows: ["Build & Release APK"]
+    types: [completed]
+    branches: [device-sync]
 
 concurrency:
   group: appimage-${{ github.ref }}
@@ -19,6 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
 
@@ -32,6 +37,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up JDK 17 (build)
         uses: actions/setup-java@v5
@@ -53,7 +60,7 @@ jobs:
       - name: Compute version
         id: version
         run: |
-          VERSION="$(grep -oP 'versionName = "\K[0-9]+\.[0-9]+\.[0-9]+' app/build.gradle.kts | head -1)"
+          VERSION="$(grep -oP 'versionName = "\K[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' app/build.gradle.kts | head -1)"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 

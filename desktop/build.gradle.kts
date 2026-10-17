@@ -44,7 +44,7 @@ compose.desktop {
             vendor = "davidrg"
             copyright = "© 2026 David RG"
 
-            targetFormats(TargetFormat.AppImage, TargetFormat.Deb, TargetFormat.Rpm)
+            if (System.getProperty("os.name").startsWith("Linux")) targetFormats(TargetFormat.AppImage, TargetFormat.Deb, TargetFormat.Rpm)
 
             modules("java.naming", "java.sql", "jdk.crypto.ec")
 
