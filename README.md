@@ -13,6 +13,8 @@ Cross-platform client for RomM servers: browse your library, download ROMs strai
 
 </div>
 
+> **Fork notice.** This is `Thinkscape/romm-sync`, a fork of [davidadrianrg/romm-sync](https://github.com/davidadrianrg/romm-sync) (MIT, © David RG) maintained by Thinkscape. It adds RomM device pairing (`/api/auth/device/*`), push-install from the RomM web UI ("Install on device") via the `/devices` socket and install claims, a headless Linux daemon (`romm-sync --daemon`, `--pair`), a RomM-slug → ES-DE/Cocoon folder map (`core/src/main/resources/platform_folders.json`) and slot-based save/state sync. Cocoon has no public rescan intent: after a push, use Cocoon → Settings → Library & Data → Rescan Games (or relaunch Cocoon); ES-DE picks new files up on its next start.
+
 ---
 
 ## 📥 Installation
