@@ -94,7 +94,8 @@ class InstallListenerService : Service() {
             val paired = container.settingsDataStore.getPairedDevice()
             if (paired == null) {
                 Log.i(TAG, "not paired; stopping")
-                stopSelf()
+                // stopSelf(startId): a start issued after pairing (newer startId) keeps the service alive.
+                stopSelf(startId)
                 return@launch
             }
             val running = ensureClient(paired)

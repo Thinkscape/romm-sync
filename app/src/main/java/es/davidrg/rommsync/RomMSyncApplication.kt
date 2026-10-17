@@ -8,6 +8,8 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import es.davidrg.rommsync.data.AppContainer
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import java.io.File
 
 class RomMSyncApplication : Application(), Configuration.Provider, ImageLoaderFactory {
@@ -19,8 +21,30 @@ class RomMSyncApplication : Application(), Configuration.Provider, ImageLoaderFa
         super.onCreate()
         container = AppContainer(this)
         restorePeriodicSync()
-        // Paired device: keep it online in RomM for push installs.
-        es.davidrg.rommsync.install.InstallListenerService.start(this)
+        observePairing()
+    }
+
+    /** Process-lifetime scope for app-wide observers. */
+    private val appScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+    )
+
+    /**
+     * Keeps the push-install service in step with the pairing, whatever path
+     * paired or unpaired the device: paired → started (and drains), unpaired → stopped.
+     */
+    private fun observePairing() {
+        appScope.launch {
+            container.settingsRepository.pairedDevice
+                .distinctUntilChanged()
+                .collect { paired ->
+                    if (paired != null) {
+                        es.davidrg.rommsync.install.InstallListenerService.start(this@RomMSyncApplication, drain = true)
+                    } else {
+                        es.davidrg.rommsync.install.InstallListenerService.stop(this@RomMSyncApplication)
+                    }
+                }
+        }
     }
 
     /**

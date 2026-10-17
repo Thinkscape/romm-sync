@@ -28,6 +28,8 @@ import es.davidrg.rommsync.data.repository.PairedDeviceSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import retrofit2.HttpException
+import es.davidrg.rommsync.install.InstallListenerService
+import es.davidrg.rommsync.util.isIgnoringBatteryOptimizations
 
 class ConfigViewModel(
     private val settingsRepository: SettingsRepository,
@@ -36,6 +38,8 @@ class ConfigViewModel(
     private val updateChecker: AppUpdateChecker? = null,
     private val apkInstallHelper: ApkInstallHelper? = null,
     private val devicePairing: DevicePairing? = null,
+    /** Application context: starts the install service once pairing completes, independent of the UI. */
+    private val appContext: android.content.Context? = null,
 ) : ViewModel() {
 
     val settings: StateFlow<ServerConfig> = settingsRepository.settings
@@ -89,6 +93,10 @@ class ConfigViewModel(
                         deviceName = name,
                     ),
                 )
+                appContext?.let { context ->
+                    InstallListenerService.start(context, drain = true)
+                    requestBatteryExemption(context)
+                }
                 _pairingState.value = PairingState.Paired
             } catch (e: CancellationException) {
                 throw e
@@ -115,7 +123,20 @@ class ConfigViewModel(
     /** Forgets the pairing locally (delete the device in RomM → Devices to remove it server-side). */
     fun unpair() {
         cancelPairing()
-        viewModelScope.launch { settingsRepository.clearPairedDevice() }
+        viewModelScope.launch {
+            settingsRepository.clearPairedDevice()
+            appContext?.let { InstallListenerService.stop(it) }
+        }
+    }
+
+    /** Asks once for the battery-optimisation exemption so the install service survives Doze. */
+    @android.annotation.SuppressLint("BatteryLife")
+    private fun requestBatteryExemption(context: android.content.Context) {
+        if (isIgnoringBatteryOptimizations(context)) return
+        val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            .setData(android.net.Uri.parse("package:${context.packageName}"))
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
     }
 
     // ── Actualizaciones desde GitHub Releases ──────────────────────────

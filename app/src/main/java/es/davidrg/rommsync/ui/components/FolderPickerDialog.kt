@@ -1,7 +1,11 @@
 package es.davidrg.rommsync.ui.components
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.storage.StorageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.SdCard
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -49,7 +55,11 @@ import java.io.File
  * que es la raíz que agrupa el almacenamiento interno y las tarjetas SD.
  */
 private const val NAV_ROOT = "/storage"
+private const val EMULATED_ROOT = "/storage/emulated"
 private const val DEFAULT_START = "/storage/emulated/0"
+
+/** A mounted storage volume shown at the top of the picker (internal storage, SD cards, USB). */
+private data class StorageRoot(val dir: File, val label: String, val removable: Boolean)
 
 /**
  * Explorador de carpetas propio basado en [java.io.File].
@@ -65,6 +75,10 @@ private const val DEFAULT_START = "/storage/emulated/0"
  * distingue "carpeta ilegible" (`listFiles() == null`) de "carpeta vacía", y
  * se muestran los ficheros (en gris, no navegables) junto a las carpetas.
  *
+ * `/storage` and `/storage/emulated` are not listable by apps, so going up
+ * from a volume root (or into those folders) shows the mounted storage volumes
+ * instead; that is how SD cards (`/storage/<UUID>`) are reached.
+ *
  * @param initialPath ruta inicial; si no existe, se sube al primer ancestro
  *   existente.
  * @param onDismiss se invoca al cancelar.
@@ -79,8 +93,10 @@ fun FolderPickerDialog(
     val context = LocalContext.current
     var refreshTick by remember { mutableStateOf(0) }
     var hasAccess by remember { mutableStateOf(hasAllFilesAccess()) }
+    val roots = remember(refreshTick) { storageRoots(context) }
+    // null = the storage volumes list.
     var currentDir by remember {
-        mutableStateOf(existingAncestorOrDefault(initialPath))
+        mutableStateOf(existingAncestorOrDefault(initialPath).takeUnless { isVolumesPlaceholder(it) })
     }
 
     // Al volver de la pantalla de permisos de Ajustes, el callback del launcher
@@ -114,7 +130,8 @@ fun FolderPickerDialog(
         refreshTick++
     }
 
-    val listing = remember(currentDir.path, refreshTick) { currentDir.listFiles() }
+    val dir = currentDir
+    val listing = remember(dir?.path, refreshTick) { dir?.listFiles() }
     val subDirs = remember(listing) {
         listing?.filter { it.isDirectory }
             ?.sortedBy { it.name.lowercase() }
@@ -126,15 +143,13 @@ fun FolderPickerDialog(
             ?: emptyList()
     }
 
-    val canGoUp = currentDir.path != NAV_ROOT && currentDir.parentFile != null
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("common.select_folder")) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    currentDir.path,
+                    dir?.path ?: tr("android.folder.volumes_title"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -183,10 +198,21 @@ fun FolderPickerDialog(
                 HorizontalDivider()
 
                 LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                    if (dir == null) {
+                        items(roots, key = { "v:${it.dir.path}" }) { root ->
+                            FolderRow(
+                                name = root.label,
+                                subtitle = root.dir.path,
+                                icon = { VolumeIcon(root.removable) },
+                                onClick = { currentDir = root.dir },
+                            )
+                        }
+                        return@LazyColumn
+                    }
                     if (listing == null) {
                         item {
-                            val granted = remember(currentDir.path, refreshTick) {
-                                SafTreeStore(context).hasGrantFor(currentDir.path)
+                            val granted = remember(dir.path, refreshTick) {
+                                SafTreeStore(context).hasGrantFor(dir.path)
                             }
                             if (granted) {
                                 Text(
@@ -198,8 +224,8 @@ fun FolderPickerDialog(
                             } else {
                                 Text(
                                     if (hasAccess &&
-                                        (currentDir.path.contains("/Android/data") ||
-                                            currentDir.path.contains("/Android/obb"))
+                                        (dir.path.contains("/Android/data") ||
+                                            dir.path.contains("/Android/obb"))
                                     ) {
                                         tr("android.folder.android_data_blocked")
                                     } else {
@@ -213,33 +239,25 @@ fun FolderPickerDialog(
                                 TextButton(
                                     onClick = {
                                         safLauncher.launch(
-                                            SafTreeStore.initialTreeUri(currentDir.path),
+                                            SafTreeStore.initialTreeUri(dir.path),
                                         )
                                     },
                                 ) { Text(tr("android.folder.grant_access")) }
                             }
                         }
                     }
-                    if (canGoUp) {
-                        item {
-                            FolderRow(
-                                name = "..",
-                                icon = { UpIcon() },
-                                onClick = {
-                                    currentDir.parentFile?.let { parent ->
-                                        if (parent.path.startsWith(NAV_ROOT)) {
-                                            currentDir = parent
-                                        }
-                                    }
-                                },
-                            )
-                        }
-                    }
-                    items(subDirs, key = { "d:${it.path}" }) { dir ->
+                    item {
                         FolderRow(
-                            name = dir.name,
+                            name = "..",
+                            icon = { UpIcon() },
+                            onClick = { currentDir = parentOrVolumes(dir, roots) },
+                        )
+                    }
+                    items(subDirs, key = { "d:${it.path}" }) { sub ->
+                        FolderRow(
+                            name = sub.name,
                             icon = { FolderIcon() },
-                            onClick = { currentDir = dir },
+                            onClick = { currentDir = sub },
                         )
                     }
                     // Ficheros visibles (no navegables) para poder comprobar el
@@ -261,7 +279,7 @@ fun FolderPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSelect(currentDir.path) }) {
+            TextButton(onClick = { dir?.let { onSelect(it.path) } }, enabled = dir != null) {
                 Text(tr("android.folder.use_this_folder"))
             }
         },
@@ -278,6 +296,7 @@ private fun FolderRow(
     name: String,
     icon: @Composable () -> Unit,
     onClick: () -> Unit,
+    subtitle: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -288,13 +307,24 @@ private fun FolderRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         icon()
-        Text(
-            name,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
@@ -335,6 +365,16 @@ private fun FolderIcon() {
 }
 
 @Composable
+private fun VolumeIcon(removable: Boolean) {
+    Icon(
+        if (removable) Icons.Filled.SdCard else Icons.Filled.PhoneAndroid,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.size(22.dp),
+    )
+}
+
+@Composable
 private fun UpIcon() {
     Icon(
         Icons.Filled.KeyboardArrowUp,
@@ -342,6 +382,55 @@ private fun UpIcon() {
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.size(22.dp),
     )
+}
+
+/** `/storage` and `/storage/emulated` cannot be listed by apps: show the volumes list instead. */
+private fun isVolumesPlaceholder(dir: File): Boolean =
+    dir.path == NAV_ROOT || dir.path == EMULATED_ROOT || !dir.path.startsWith("$NAV_ROOT/")
+
+/**
+ * Where ".." leads: the parent folder, or the volumes list when [dir] is a
+ * volume root or the parent is `/storage`, `/storage/emulated` or unreadable.
+ */
+private fun parentOrVolumes(dir: File, roots: List<StorageRoot>): File? {
+    if (roots.any { it.dir.path == dir.path }) return null
+    val parent = dir.parentFile ?: return null
+    if (isVolumesPlaceholder(parent) || parent.listFiles() == null) return null
+    return parent
+}
+
+/**
+ * Mounted storage volumes (internal storage first, then SD cards / USB),
+ * labelled with the system description plus "Internal storage" / "SD card".
+ */
+private fun storageRoots(context: Context): List<StorageRoot> {
+    val storageManager = context.getSystemService(StorageManager::class.java)
+    val roots = storageManager?.storageVolumes.orEmpty()
+        .filter { it.state == Environment.MEDIA_MOUNTED || it.state == Environment.MEDIA_MOUNTED_READ_ONLY }
+        .mapNotNull { volume ->
+            val dir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                volume.directory
+            } else {
+                // Pre-R: derive the root from this app's external files dir on that volume.
+                context.getExternalFilesDirs(null).filterNotNull()
+                    .firstOrNull { storageManager?.getStorageVolume(it) == volume }
+                    ?.path?.substringBefore("/Android/")?.let(::File)
+            } ?: return@mapNotNull null
+            val kind = if (volume.isPrimary && !volume.isRemovable) {
+                tr("android.folder.volume_internal")
+            } else {
+                tr("android.folder.volume_removable")
+            }
+            val description = volume.getDescription(context).orEmpty()
+            val label = if (description.isBlank() || description.equals(kind, ignoreCase = true)) {
+                kind
+            } else {
+                "$description · $kind"
+            }
+            StorageRoot(dir, label, removable = volume.isRemovable)
+        }
+        .sortedBy { if (it.removable) 1 else 0 }
+    return roots.ifEmpty { listOf(StorageRoot(File(DEFAULT_START), tr("android.folder.volume_internal"), false)) }
 }
 
 /**

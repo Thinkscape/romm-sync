@@ -26,6 +26,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -51,15 +54,20 @@ fun RomMSyncApp() {
     val context = LocalContext.current
     val container = (context.applicationContext as RomMSyncApplication).container
 
-    val settings by container.settingsRepository.settings.collectAsState(
-        initial = es.davidrg.rommsync.data.local.ServerConfig("", "", "", 2)
-    )
+    // null until DataStore answers: deciding onboarding from the placeholder would pick the wrong start screen.
+    val loadedSettings by remember {
+        container.settingsRepository.settings.map<es.davidrg.rommsync.data.local.ServerConfig, es.davidrg.rommsync.data.local.ServerConfig?> { it }
+    }.collectAsState(initial = null)
+    val settings = loadedSettings ?: return
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
     val needsOnboarding = !settings.isConfigured || !hasAllFilesAccess()
+    // Fixed once: finishing onboarding (e.g. pairing completes on Config) must not reset the
+    // graph to Library; the nav bar simply appears and the user stays where they are.
+    val startRoute = rememberSaveable { if (needsOnboarding) Screen.Config.route else Screen.Library.route }
     val windowInfo = rememberWindowInfo()
 
     // La pestaña Sync solo existe si la función de sincronizar saves está
@@ -77,12 +85,15 @@ fun RomMSyncApp() {
 
     // En horizontal (portátiles 16:9 / 4:3) un rail lateral libera la altura
     // que consumía la bottom bar: todo el alto de pantalla para el contenido.
-    if (windowInfo.isLandscape && !needsOnboarding) {
+    if (windowInfo.isLandscape) {
+        // Same Row whether or not onboarding is done, so the NavHost keeps its back stack.
         Row(modifier = Modifier.fillMaxSize()) {
-            AppNavRail(currentDestination, navItems) { route -> navigateTo(route, navController) }
+            if (!needsOnboarding) {
+                AppNavRail(currentDestination, navItems) { route -> navigateTo(route, navController) }
+            }
             AppNavHost(
                 navController = navController,
-                needsOnboarding = needsOnboarding,
+                startRoute = startRoute,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -99,7 +110,7 @@ fun RomMSyncApp() {
         ) { innerPadding ->
             AppNavHost(
                 navController = navController,
-                needsOnboarding = needsOnboarding,
+                startRoute = startRoute,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
@@ -181,12 +192,12 @@ private fun AppBottomBar(
 @Composable
 private fun AppNavHost(
     navController: NavHostController,
-    needsOnboarding: Boolean,
+    startRoute: String,
     modifier: Modifier = Modifier,
 ) {
     NavHost(
         navController = navController,
-        startDestination = if (needsOnboarding) Screen.Config.route else Screen.Library.route,
+        startDestination = startRoute,
         modifier = modifier,
         enterTransition = { fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 8 } },
         exitTransition = { fadeOut(tween(180)) },

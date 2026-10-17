@@ -86,6 +86,10 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import es.davidrg.rommsync.data.repository.PairedDeviceSettings
 import es.davidrg.rommsync.ui.viewmodel.PairingState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,6 +107,7 @@ fun ConfigScreen() {
                     container.appUpdateChecker,
                     container.apkInstallHelper,
                     container.devicePairing,
+                    context.applicationContext,
                 )
             }
         }
@@ -140,21 +145,12 @@ fun ConfigScreen() {
         if (apiKey.isEmpty() && manualApiKey.isNotEmpty()) apiKey = manualApiKey
     }
 
-    // Paired: API clients use the device token and the push-install service runs.
+    // Paired: refresh the shared API client with the device token (the service is started by
+    // ConfigViewModel and RomMSyncApplication, not by this screen).
     LaunchedEffect(pairedDevice) {
         val paired = pairedDevice ?: return@LaunchedEffect
         serverUrl = paired.baseUrl
         container.configureApi(paired.baseUrl, paired.token)
-        es.davidrg.rommsync.install.InstallListenerService.start(context, drain = true)
-    }
-
-    // Fresh pairing: ask once for the battery-optimisation exemption so the service survives.
-    LaunchedEffect(pairingState) {
-        if (pairingState is PairingState.Paired &&
-            !es.davidrg.rommsync.util.isIgnoringBatteryOptimizations(context)
-        ) {
-            runCatching { es.davidrg.rommsync.util.requestIgnoreBatteryOptimizations(context) }
-        }
     }
 
     // Cargar ruta de datos de ES-DE
@@ -291,7 +287,6 @@ fun ConfigScreen() {
                         onPair = { viewModel.startPairing(serverUrl, deviceName) },
                         onCancel = { viewModel.cancelPairing() },
                         onUnpair = {
-                            es.davidrg.rommsync.install.InstallListenerService.stop(context)
                             viewModel.unpair()
                             container.configureApi(serverUrl, manualApiKey)
                         },
@@ -304,14 +299,12 @@ fun ConfigScreen() {
                 icon = Icons.Outlined.Folder,
                 title = tr("settings.roms.title"),
             ) {
-                OutlinedTextField(
+                CommittedPathField(
                     value = settings.romsRootPath,
-                    onValueChange = { viewModel.setRomsRootPath(it) },
-                    label = { Text(tr("android.config.roms_root_path_label")) },
-                    placeholder = { Text("/storage/emulated/0/ROMs") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    label = tr("android.config.roms_root_path_label"),
+                    placeholder = "/storage/emulated/0/ROMs",
+                    requireDirectory = true,
+                    onCommit = { viewModel.setRomsRootPath(it) },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 FilledTonalButton(
@@ -355,14 +348,12 @@ fun ConfigScreen() {
 
                 if (settings.dualRomsPathsEnabled) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
+                    CommittedPathField(
                         value = settings.secondaryRomsPath,
-                        onValueChange = { viewModel.setSecondaryRomsPath(it) },
-                        label = { Text(tr("android.config.secondary_path_label")) },
-                        placeholder = { Text("/storage/emulated/1/ROMs") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        label = tr("android.config.secondary_path_label"),
+                        placeholder = "/storage/emulated/1/ROMs",
+                        requireDirectory = true,
+                        onCommit = { viewModel.setSecondaryRomsPath(it) },
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     FilledTonalButton(
@@ -491,14 +482,12 @@ fun ConfigScreen() {
                     )
                 }
                 if (esdeEnabledLocal ?: esdeEnabled) {
-                OutlinedTextField(
+                CommittedPathField(
                     value = esdeDataDir,
-                    onValueChange = { viewModel.setEsdeDataPath(it) },
-                    label = { Text(tr("android.config.esde_data_dir_label")) },
-                    placeholder = { Text("/storage/emulated/0/ES-DE") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    label = tr("android.config.esde_data_dir_label"),
+                    placeholder = "/storage/emulated/0/ES-DE",
+                    requireDirectory = false,
+                    onCommit = { viewModel.setEsdeDataPath(it) },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 FilledTonalButton(
@@ -553,14 +542,12 @@ fun ConfigScreen() {
                     )
                 }
                 if (retroHraiEnabledLocal ?: retroHraiEnabled) {
-                OutlinedTextField(
+                CommittedPathField(
                     value = retroHraiMediaPath,
-                    onValueChange = { viewModel.setRetroHraiMediaPath(it) },
-                    label = { Text(tr("android.config.retrohrai_media_path_label")) },
-                    placeholder = { Text("/storage/emulated/0/RetroHrai/media") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    label = tr("android.config.retrohrai_media_path_label"),
+                    placeholder = "/storage/emulated/0/RetroHrai/media",
+                    requireDirectory = false,
+                    onCommit = { viewModel.setRetroHraiMediaPath(it) },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 FilledTonalButton(
@@ -1158,6 +1145,69 @@ private fun defaultDeviceName(): String {
         maker.isEmpty() || model.startsWith(maker, ignoreCase = true) -> model
         else -> "$maker $model"
     }
+}
+
+/**
+ * Path field edited locally and committed on IME Done or focus loss, so typing
+ * never round-trips through DataStore (that dropped/reordered characters).
+ * With [requireDirectory], a path that is not an existing directory is shown
+ * as an error and not saved.
+ */
+@Composable
+private fun CommittedPathField(
+    value: String,
+    label: String,
+    placeholder: String,
+    requireDirectory: Boolean,
+    onCommit: (String) -> Unit,
+) {
+    // Re-seeded when the stored value changes (e.g. chosen with the folder picker).
+    var text by remember(value) { mutableStateOf(value) }
+    var error by remember(value) { mutableStateOf<String?>(null) }
+    var hadFocus by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+
+    fun commit() {
+        val path = text.trim().let { if (it.length > 1) it.trimEnd('/') else it }
+        if (path == value) {
+            error = null
+            return
+        }
+        if (path.isEmpty() || (requireDirectory && !java.io.File(path).isDirectory)) {
+            error = tr("android.config.path_not_directory", path)
+            return
+        }
+        error = null
+        onCommit(path)
+    }
+
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            error = null
+        },
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        singleLine = true,
+        isError = error != null,
+        supportingText = error?.let { message -> { Text(message) } },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = {
+            commit()
+            focusManager.clearFocus()
+        }),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { state ->
+                if (hadFocus && !state.isFocused) commit()
+                hadFocus = state.isFocused
+            },
+        shape = RoundedCornerShape(12.dp),
+    )
 }
 
 @Composable
