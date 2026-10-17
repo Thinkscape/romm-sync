@@ -19,6 +19,8 @@ class RomMSyncApplication : Application(), Configuration.Provider, ImageLoaderFa
         super.onCreate()
         container = AppContainer(this)
         restorePeriodicSync()
+        // Paired device: keep it online in RomM for push installs.
+        es.davidrg.rommsync.install.InstallListenerService.start(this)
     }
 
     /**

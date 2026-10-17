@@ -1,6 +1,8 @@
 package es.davidrg.rommsync.data.sync
 
 import android.content.Context
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import es.davidrg.rommsync.core.sync.SavePathStaging
 import es.davidrg.rommsync.core.sync.StagedPath
 import es.davidrg.rommsync.core.util.RootShell
@@ -46,6 +48,32 @@ object SavePathAccess {
         } else {
             SavePathStaging.cleanup(staged)
         }
+    }
+
+    /**
+     * Removes [file] (inside [staged].dir) from the real save folder too:
+     * [commit] only upserts, so a deletion in a staged copy would not reach the
+     * original. Returns true when the file is gone from the original location.
+     */
+    fun delete(staged: StagedPath, file: File, context: Context): Boolean {
+        val relative = file.relativeToOrNull(staged.dir)?.path
+            ?.takeIf { it.isNotEmpty() && !it.startsWith("..") }
+            ?: return false
+        if (file.exists() && !file.deleteRecursively()) return false
+        if (!staged.isCopy) return true
+        if (!staged.viaSaf) {
+            return RootShell.run("rm -rf ${RootShell.sq(File(staged.original, relative).path)}") != null
+        }
+        val treeUri = SafTreeStore(context).findTreeUriFor(staged.original) ?: return false
+        val root = DocumentFile.fromTreeUri(context, Uri.parse(treeUri)) ?: return false
+        val treePath = SafTreeStore.pathFromTreeUri(Uri.parse(treeUri))?.trimEnd('/') ?: return false
+        val target = File(staged.original, relative).path
+        if (!target.startsWith("$treePath/")) return false
+        var cur: DocumentFile = root
+        for (seg in target.removePrefix("$treePath/").split('/').filter { it.isNotEmpty() }) {
+            cur = cur.findFile(seg) ?: return true // already absent
+        }
+        return cur.delete()
     }
 
     /** true si la ruta es utilizable: File, root o concesión SAF vigente. */

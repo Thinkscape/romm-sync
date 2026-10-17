@@ -20,6 +20,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import es.davidrg.rommsync.core.auth.DevicePairing
+import es.davidrg.rommsync.core.auth.PairingCode
+import es.davidrg.rommsync.core.auth.PairingDeniedException
+import es.davidrg.rommsync.core.auth.PairingExpiredException
+import es.davidrg.rommsync.data.repository.PairedDeviceSettings
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import retrofit2.HttpException
 
 class ConfigViewModel(
     private val settingsRepository: SettingsRepository,
@@ -27,6 +35,7 @@ class ConfigViewModel(
     private val saveSyncManager: SaveSyncManager? = null,
     private val updateChecker: AppUpdateChecker? = null,
     private val apkInstallHelper: ApkInstallHelper? = null,
+    private val devicePairing: DevicePairing? = null,
 ) : ViewModel() {
 
     val settings: StateFlow<ServerConfig> = settingsRepository.settings
@@ -35,6 +44,79 @@ class ConfigViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = ServerConfig("", "", "", 2),
         )
+
+    // ── RomM device pairing ────────────────────────────────────────────
+
+    val pairedDevice: StateFlow<PairedDeviceSettings?> = settingsRepository.pairedDevice
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Upstream API key (API-key mode), independent of the paired token. */
+    val manualApiKey: StateFlow<String> = settingsRepository.manualApiKey
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    private val _pairingState = MutableStateFlow<PairingState>(PairingState.Idle)
+    val pairingState: StateFlow<PairingState> = _pairingState.asStateFlow()
+
+    private var pairingJob: Job? = null
+
+    /**
+     * Runs the RomM device authorization flow: shows the user code, polls until
+     * approved, then stores token + device id (which also switches every API
+     * client to the paired token).
+     */
+    fun startPairing(serverUrl: String, deviceName: String) {
+        val pairing = devicePairing ?: return
+        val baseUrl = serverUrl.trim().trimEnd('/')
+        val name = deviceName.trim()
+        if (baseUrl.isEmpty() || name.isEmpty()) return
+        pairingJob?.cancel()
+        _pairingState.value = PairingState.Starting
+        pairingJob = viewModelScope.launch {
+            try {
+                val identifier = settingsRepository.deviceIdentifier()
+                val device = pairing.pair(
+                    baseUrl = baseUrl,
+                    identifier = identifier,
+                    name = name,
+                    platform = PAIRING_PLATFORM,
+                    clientVersion = BuildConfig.VERSION_NAME,
+                ) { code -> _pairingState.value = PairingState.WaitingForApproval(code) }
+                settingsRepository.savePairedDevice(
+                    PairedDeviceSettings(
+                        baseUrl = baseUrl,
+                        token = device.token,
+                        deviceId = device.deviceId,
+                        deviceName = name,
+                    ),
+                )
+                _pairingState.value = PairingState.Paired
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PairingExpiredException) {
+                _pairingState.value = PairingState.Failed(tr("android.pair.error_expired"))
+            } catch (e: PairingDeniedException) {
+                _pairingState.value = PairingState.Failed(tr("android.pair.error_denied", e.message ?: ""))
+            } catch (e: HttpException) {
+                _pairingState.value = PairingState.Failed(tr("android.pair.error_http", e.code()))
+            } catch (e: Exception) {
+                _pairingState.value = PairingState.Failed(
+                    tr("android.pair.error_network", e.message ?: e.javaClass.simpleName),
+                )
+            }
+        }
+    }
+
+    fun cancelPairing() {
+        pairingJob?.cancel()
+        pairingJob = null
+        _pairingState.value = PairingState.Idle
+    }
+
+    /** Forgets the pairing locally (delete the device in RomM → Devices to remove it server-side). */
+    fun unpair() {
+        cancelPairing()
+        viewModelScope.launch { settingsRepository.clearPairedDevice() }
+    }
 
     // ── Actualizaciones desde GitHub Releases ──────────────────────────
     // null = aún no se ha comprobado nada en esta sesión.
@@ -245,6 +327,20 @@ class ConfigViewModel(
     fun setRetroHraiExportEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setRetroHraiExportEnabled(enabled) }
     }
+
+    private companion object {
+        /** `platform` reported to RomM when pairing. */
+        const val PAIRING_PLATFORM = "android"
+    }
+}
+
+/** Progress of the RomM device authorization flow. */
+sealed class PairingState {
+    data object Idle : PairingState()
+    data object Starting : PairingState()
+    data class WaitingForApproval(val code: PairingCode) : PairingState()
+    data object Paired : PairingState()
+    data class Failed(val message: String) : PairingState()
 }
 
 /**

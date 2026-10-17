@@ -20,9 +20,9 @@ sealed interface SyncSupport {
  *
  * Defaults depend on the device layout when a [SaveProfile] is passed: a
  * [SaveHost.LINUX] (EmuDeck) profile uses the standalone emulators EmuDeck
- * installs (DuckStation, PCSX2, RPCS3); an [SaveHost.ANDROID] profile uses the
- * Android standalones (DuckStation for psx). Without a profile the upstream
- * Android defaults apply unchanged.
+ * installs (DuckStation, PCSX2, RPCS3); an [SaveHost.ANDROID] profile keeps the
+ * upstream Android defaults (psx on RetroArch: DuckStation for Android is
+ * Play-Store only and not installed on the Thor).
  */
 object SaveHandlerRegistry {
 
@@ -112,10 +112,7 @@ object SaveHandlerRegistry {
                 "ps2" -> return EmulatorId.PCSX2
                 "ps3" -> return EmulatorId.RPCS3
             }
-            SaveHost.ANDROID -> when (slug) {
-                in PSX_SLUGS -> return EmulatorId.DUCKSTATION
-            }
-            null -> Unit
+            SaveHost.ANDROID, null -> Unit
         }
         return when (slug) {
             "nds", "ds" -> EmulatorId.MELONDS

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.security.crypto.EncryptedSharedPreferences
+import es.davidrg.rommsync.data.repository.PairedDeviceSettings
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -70,9 +71,17 @@ class SettingsDataStore(private val context: Context) {
          */
         private val LEGACY_API_KEY = stringPreferencesKey("api_key")
 
+        // ── RomM device pairing (fork) ─────────────────────────────────
+        /** UUID generated once per install; RomM keys the Device row on it. */
+        val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
+        val PAIRED_DEVICE_ID = stringPreferencesKey("paired_device_id")
+        val PAIRED_DEVICE_NAME = stringPreferencesKey("paired_device_name")
+        val PAIRED_BASE_URL = stringPreferencesKey("paired_base_url")
+
         // ── EncryptedSharedPreferences key ─────────────────────────────
         private const val SECURE_PREFS_FILE = "romsync_secure_prefs"
         private const val SECURE_KEY_API_KEY = "api_key"
+        private const val SECURE_KEY_PAIRED_TOKEN = "paired_token"
 
         const val DEFAULT_ROMS_PATH = "/storage/emulated/0/ROMs"
         const val DEFAULT_SECONDARY_ROMS_PATH = "/storage/emulated/1/ROMs"
@@ -107,6 +116,9 @@ class SettingsDataStore(private val context: Context) {
      */
     private val _apiKeyFlow = MutableStateFlow(securePrefs.getString(SECURE_KEY_API_KEY, "") ?: "")
 
+    /** Device-bound `rmm_…` token from pairing ("" = not paired). */
+    private val _pairedTokenFlow = MutableStateFlow(securePrefs.getString(SECURE_KEY_PAIRED_TOKEN, "") ?: "")
+
     init {
         // One-time migration: if a previous app version stored the API key in
         // the (plaintext) DataStore, move it to EncryptedSharedPreferences and
@@ -130,7 +142,17 @@ class SettingsDataStore(private val context: Context) {
     // ── Reactive flows (Compose / ViewModel) ──────────────────────────
 
     val serverUrl: Flow<String> = context.dataStore.data.map { it[SERVER_URL] ?: "" }
-    val apiKey: Flow<String> = _apiKeyFlow
+    /** Upstream API key typed by the user (API-key mode). */
+    val manualApiKey: Flow<String> = _apiKeyFlow
+
+    /** Current pairing, or null in API-key mode. */
+    val pairedDevice: Flow<PairedDeviceSettings?> = pairedDeviceFlow()
+
+    /**
+     * Credential the API clients send as Bearer: the paired device token when
+     * paired, otherwise the manual API key.
+     */
+    val apiKey: Flow<String> = combine(_apiKeyFlow, pairedDevice) { key, paired -> paired?.token ?: key }
     val romsRootPath: Flow<String> = context.dataStore.data.map { it[ROMS_ROOT_PATH] ?: DEFAULT_ROMS_PATH }
     val secondaryRomsPath: Flow<String> = context.dataStore.data.map {
         it[SECONDARY_ROMS_PATH] ?: DEFAULT_SECONDARY_ROMS_PATH
@@ -184,7 +206,10 @@ class SettingsDataStore(private val context: Context) {
     val settings: Flow<ServerConfig> = combine(
         context.dataStore.data,
         _apiKeyFlow,
-    ) { prefs, apiKey ->
+        _pairedTokenFlow,
+    ) { prefs, manualKey, token ->
+        val paired = pairedFrom(prefs, token)
+        val apiKey = paired?.token ?: manualKey
         ServerConfig(
             serverUrl = prefs[SERVER_URL] ?: "",
             apiKey = apiKey,
@@ -193,6 +218,7 @@ class SettingsDataStore(private val context: Context) {
             wifiOnlyDownloads = prefs[WIFI_ONLY_DOWNLOADS] ?: false,
             dualRomsPathsEnabled = prefs[DUAL_ROMS_PATHS_ENABLED] ?: false,
             secondaryRomsPath = prefs[SECONDARY_ROMS_PATH] ?: DEFAULT_SECONDARY_ROMS_PATH,
+            pairedDeviceName = paired?.deviceName,
         )
     }
 
@@ -210,6 +236,72 @@ class SettingsDataStore(private val context: Context) {
         securePrefs.edit().putString(SECURE_KEY_API_KEY, key).apply()
         _apiKeyFlow.value = key
     }
+
+    // ── Pairing ──────────────────────────────────────────────────────
+
+    private fun pairedFrom(prefs: Preferences, token: String): PairedDeviceSettings? {
+        val deviceId = prefs[PAIRED_DEVICE_ID]
+        val baseUrl = prefs[PAIRED_BASE_URL]
+        if (token.isEmpty() || deviceId.isNullOrEmpty() || baseUrl.isNullOrEmpty()) return null
+        return PairedDeviceSettings(
+            baseUrl = baseUrl,
+            token = token,
+            deviceId = deviceId,
+            deviceName = prefs[PAIRED_DEVICE_NAME].orEmpty(),
+        )
+    }
+
+    private fun pairedDeviceFlow(): Flow<PairedDeviceSettings?> =
+        combine(context.dataStore.data, _pairedTokenFlow) { prefs, token -> pairedFrom(prefs, token) }
+
+    /** Reads the token from the encrypted store, not the flow: other instances (workers) may have paired. */
+    suspend fun getPairedDevice(): PairedDeviceSettings? =
+        pairedFrom(context.dataStore.data.first(), securePrefs.getString(SECURE_KEY_PAIRED_TOKEN, "") ?: "")
+
+    fun getPairedDeviceBlocking(): PairedDeviceSettings? =
+        runCatching { runBlocking { getPairedDevice() } }.getOrNull()
+
+    /**
+     * Stores a successful pairing. The pairing URL also becomes the server URL
+     * so every API client talks to the server that issued the token.
+     */
+    suspend fun savePairedDevice(device: PairedDeviceSettings) {
+        securePrefs.edit().putString(SECURE_KEY_PAIRED_TOKEN, device.token).apply()
+        context.dataStore.edit {
+            it[PAIRED_DEVICE_ID] = device.deviceId
+            it[PAIRED_DEVICE_NAME] = device.deviceName
+            it[PAIRED_BASE_URL] = device.baseUrl.trimEnd('/')
+            it[SERVER_URL] = device.baseUrl.trimEnd('/')
+        }
+        _pairedTokenFlow.value = device.token
+    }
+
+    /** Forgets the pairing locally; the device identifier is kept so re-pairing updates the same Device. */
+    suspend fun clearPairedDevice() {
+        securePrefs.edit().remove(SECURE_KEY_PAIRED_TOKEN).apply()
+        _pairedTokenFlow.value = ""
+        context.dataStore.edit {
+            it.remove(PAIRED_DEVICE_ID)
+            it.remove(PAIRED_DEVICE_NAME)
+            it.remove(PAIRED_BASE_URL)
+        }
+    }
+
+    /** Per-install UUID sent as `client_device_identifier`; generated on first use. */
+    suspend fun deviceIdentifier(): String {
+        context.dataStore.data.first()[DEVICE_IDENTIFIER]?.let { return it }
+        var identifier = ""
+        context.dataStore.edit { prefs ->
+            identifier = prefs[DEVICE_IDENTIFIER] ?: java.util.UUID.randomUUID().toString().also {
+                prefs[DEVICE_IDENTIFIER] = it
+            }
+        }
+        return identifier
+    }
+
+    fun getWifiOnlyDownloadsBlocking(): Boolean =
+        runCatching { runBlocking { context.dataStore.data.first()[WIFI_ONLY_DOWNLOADS] ?: false } }
+            .getOrDefault(false)
 
     suspend fun setRomsRootPath(path: String) {
         context.dataStore.edit { it[ROMS_ROOT_PATH] = path }
@@ -367,11 +459,12 @@ class SettingsDataStore(private val context: Context) {
     }
 
     /**
-     * Synchronous read of the API key from EncryptedSharedPreferences.
-     * Safe to call from a Worker's `doWork()` since SharedPreferences access
-     * is already blocking and the data is already decrypted in memory.
+     * Synchronous read of the Bearer credential for WorkManager: the paired
+     * device token when paired, otherwise the API key from
+     * EncryptedSharedPreferences.
      */
     fun getApiKeyBlocking(): String {
+        getPairedDeviceBlocking()?.let { return it.token }
         return runCatching {
             securePrefs.getString(SECURE_KEY_API_KEY, "") ?: ""
         }.getOrDefault("")
@@ -457,6 +550,8 @@ data class ServerConfig(
     val dualRomsPathsEnabled: Boolean = false,
     /** Segunda ruta de ROMs (normalmente la tarjeta SD). Solo usa si dualRomsPathsEnabled. */
     val secondaryRomsPath: String = "",
+    /** Name of the paired RomM device; null in API-key mode. */
+    val pairedDeviceName: String? = null,
 ) {
     val isConfigured: Boolean get() = serverUrl.isNotEmpty() && apiKey.isNotEmpty()
 }

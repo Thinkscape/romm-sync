@@ -510,10 +510,10 @@ class InstallClient(
 /** A request that cannot be installed; its message becomes the reported reason. */
 internal class InstallFailure(message: String) : Exception(message)
 
-internal data class InstallTarget(val file: RomFileDto, val target: File)
+data class InstallTarget(val file: RomFileDto, val target: File)
 
 /** [primary] is the single rom file, or the game folder for multi-file roms. */
-internal data class InstallPlan(val primary: File, val targets: List<InstallTarget>)
+data class InstallPlan(val primary: File, val targets: List<InstallTarget>)
 
 /**
  * Where each requested file of [rom] goes under [platformDir]. A single file at
@@ -521,7 +521,7 @@ internal data class InstallPlan(val primary: File, val targets: List<InstallTarg
  * into `<fs_name>/` keeping the sub-paths RomM reports, renamed `<fs_name>.m3u/`
  * when the set contains an `.m3u` (ES-DE and Cocoon then show one entry).
  */
-internal fun planInstall(rom: RomDetailDto, fileIds: List<Int>, platformDir: File): InstallPlan {
+fun planInstall(rom: RomDetailDto, fileIds: List<Int>, platformDir: File): InstallPlan {
     val byId = rom.files.associateBy { it.id }
     val files = if (fileIds.isEmpty()) {
         rom.files

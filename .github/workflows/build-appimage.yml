@@ -96,10 +96,14 @@ jobs:
           JAR="$(ls desktop/build/compose/jars/romm-sync-linux-*-release.jar | head -1)"
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
           cp "$JAR" AppDir/usr/bin/romm-sync.jar
-          # Launcher: uses the jlinked runtime of the target arch
+          # Launcher: uses the jlinked runtime of the target arch. `--daemon`
+          # (headless systemd service) gets a small heap and no AWT.
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
+          if [ "$1" = "--daemon" ]; then
+            exec "$HERE/usr/bin/runtime/bin/java" -Xmx192m -XX:+UseSerialGC -Djava.awt.headless=true -jar "$HERE/usr/bin/romm-sync.jar" "$@"
+          fi
           exec "$HERE/usr/bin/runtime/bin/java" -jar "$HERE/usr/bin/romm-sync.jar" "$@"
           EOF
           chmod +x AppDir/AppRun

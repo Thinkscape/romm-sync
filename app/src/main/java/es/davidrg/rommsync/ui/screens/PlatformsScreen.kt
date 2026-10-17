@@ -90,6 +90,10 @@ fun PlatformsScreen() {
     val retroArchBasePath by container.settingsRepository.retroArchBasePath.collectAsState(
         initial = es.davidrg.rommsync.data.local.SettingsDataStore.DEFAULT_RETROARCH_PATH,
     )
+    // Device layout (SD-card profile when the ROM root is on a removable volume).
+    val saveProfile = remember(settings.romsRootPath) {
+        es.davidrg.rommsync.data.sync.SavePathResolver.deviceProfile(settings.romsRootPath)
+    }
 
     val allVisible = platforms.isNotEmpty() && platforms.all { it.visible }
     val windowInfo = es.davidrg.rommsync.ui.components.rememberWindowInfo()
@@ -359,6 +363,7 @@ fun PlatformsScreen() {
                     PlatformCard(
                         platform = platform,
                         retroArchBasePath = retroArchBasePath,
+                        saveProfile = saveProfile,
                         container = container,
                         syncEnabled = saveSyncEnabled,
                         esdeEnabled = esdeExportEnabled,
@@ -382,6 +387,7 @@ fun PlatformsScreen() {
 private fun PlatformCard(
     platform: Platform,
     retroArchBasePath: String,
+    saveProfile: es.davidrg.rommsync.core.sync.platform.SaveProfile?,
     container: es.davidrg.rommsync.data.AppContainer,
     syncEnabled: Boolean,
     esdeEnabled: Boolean,
@@ -397,15 +403,29 @@ private fun PlatformCard(
     val availableEmulators = remember(platform.slug) {
         es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry.getAvailableEmulators(platform.slug)
     }
-    val defaultEmulator = remember(platform.slug) {
-        es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry.getDefaultEmulator(platform.slug)
+    val defaultEmulator = remember(platform.slug, saveProfile) {
+        es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry.getDefaultEmulator(platform.slug, saveProfile)
     }
     val currentEmulator = platform.emulatorId ?: defaultEmulator.id
-    val defaultSavesPath = remember(currentEmulator, platform.slug, retroArchBasePath) {
-        es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry.getDefaultSavesPath(
-            emulatorId = currentEmulator,
+    val currentEmulatorName = remember(currentEmulator) {
+        es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry.EmulatorId.entries
+            .find { it.id == currentEmulator }?.displayName ?: currentEmulator
+    }
+    // Same resolution the save sync uses (SavePathResolver), without the platform override.
+    val defaultSavesPath = remember(currentEmulator, platform.slug, retroArchBasePath, saveProfile) {
+        es.davidrg.rommsync.data.sync.SavePathResolver.platformBasePath(
             platformSlug = platform.slug,
+            emulatorId = currentEmulator,
+            savesPathOverride = null,
             retroArchBase = retroArchBasePath,
+            profile = saveProfile,
+        )
+    }
+    val syncSupport = remember(platform.slug, platform.emulatorId, saveProfile) {
+        es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry.syncSupport(
+            platform.slug,
+            platform.emulatorId,
+            saveProfile,
         )
     }
 
@@ -458,12 +478,19 @@ private fun PlatformCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            "${platform.slug} • ${platform.romCount} ROMs • $currentEmulator",
+                            "${platform.slug} • ${platform.romCount} ROMs • $currentEmulatorName",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (syncEnabled && syncSupport is es.davidrg.rommsync.core.sync.platform.SyncSupport.Unsupported) {
+                            Text(
+                                tr("android.platforms.sync_unsupported", syncSupport.reason),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                 }
                 // Botón de expandir configuración (sync, export y destino de
@@ -542,6 +569,21 @@ private fun PlatformCard(
                     tr("android.platforms.sync_config"),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    when (syncSupport) {
+                        is es.davidrg.rommsync.core.sync.platform.SyncSupport.Supported ->
+                            tr("android.platforms.sync_supported", currentEmulatorName)
+                        is es.davidrg.rommsync.core.sync.platform.SyncSupport.Unsupported ->
+                            tr("android.platforms.sync_unsupported", syncSupport.reason)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (syncSupport is es.davidrg.rommsync.core.sync.platform.SyncSupport.Unsupported) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 

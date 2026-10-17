@@ -27,7 +27,7 @@ object DesktopUpdater {
     )
 
     fun check(): UpdateInfo? {
-        val conn = URL("https://api.github.com/repos/davidadrianrg/romm-sync/releases/latest").openConnection() as HttpURLConnection
+        val conn = URL("https://api.github.com/repos/$REPO/releases/latest").openConnection() as HttpURLConnection
         conn.connectTimeout = 10_000
         conn.readTimeout = 10_000
         conn.setRequestProperty("Accept", "application/vnd.github+json")
@@ -167,14 +167,52 @@ object DesktopUpdater {
         }
     }
 
-    private fun isNewer(latest: String, current: String): Boolean {
-        val l = latest.split('.').map { it.toIntOrNull() ?: 0 }
-        val c = current.split('.').map { it.toIntOrNull() ?: 0 }
-        for (i in 0 until maxOf(l.size, c.size)) {
-            val li = l.getOrNull(i) ?: 0
-            val ci = c.getOrNull(i) ?: 0
-            if (li != ci) return li > ci
+    /** Fork releases: `v1.0.0-thinkscape.N`. */
+    private const val REPO = "Thinkscape/romm-sync"
+
+    /**
+     * Semver precedence: numeric core first; with an equal core a release beats
+     * any prerelease, and prerelease identifiers compare numerically when both
+     * are numbers (so `1.0.0-thinkscape.10` > `1.0.0-thinkscape.2`).
+     */
+    internal fun isNewer(latest: String, current: String): Boolean = compareVersions(latest, current) > 0
+
+    internal fun compareVersions(a: String, b: String): Int {
+        val (aCore, aPre) = splitVersion(a)
+        val (bCore, bPre) = splitVersion(b)
+        val ac = aCore.split('.').map { it.toIntOrNull() ?: 0 }
+        val bc = bCore.split('.').map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(ac.size, bc.size)) {
+            val cmp = (ac.getOrNull(i) ?: 0).compareTo(bc.getOrNull(i) ?: 0)
+            if (cmp != 0) return cmp
         }
-        return false
+        if (aPre == null || bPre == null) {
+            return when {
+                aPre == bPre -> 0
+                aPre == null -> 1
+                else -> -1
+            }
+        }
+        val ap = aPre.split('.')
+        val bp = bPre.split('.')
+        for (i in 0 until minOf(ap.size, bp.size)) {
+            val an = ap[i].toIntOrNull()
+            val bn = bp[i].toIntOrNull()
+            val cmp = when {
+                an != null && bn != null -> an.compareTo(bn)
+                an != null -> -1
+                bn != null -> 1
+                else -> ap[i].compareTo(bp[i])
+            }
+            if (cmp != 0) return cmp
+        }
+        return ap.size.compareTo(bp.size)
+    }
+
+    /** (core, prerelease or null); build metadata after `+` is ignored. */
+    private fun splitVersion(v: String): Pair<String, String?> {
+        val noBuild = v.trim().removePrefix("v").substringBefore('+')
+        val dash = noBuild.indexOf('-')
+        return if (dash < 0) noBuild to null else noBuild.substring(0, dash) to noBuild.substring(dash + 1)
     }
 }

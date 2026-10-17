@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.remote.dto.PlatformDto
 import es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry
@@ -386,7 +387,7 @@ private fun PlatformConfigCard(
 @Composable
 private fun PlatformConfigDialog(p: PlatformDto, state: DesktopAppState, onDismiss: () -> Unit) {
     val cfg = remember { state.platformConfig(p.slug) }
-    var folder by remember { mutableStateOf(cfg.romsFolderOverride ?: p.slug) }
+    var folder by remember { mutableStateOf(cfg.romsFolderOverride ?: PlatformFolders.folderFor(p.slug).orEmpty()) }
     var savesPath by remember { mutableStateOf(cfg.savesPathOverride ?: "") }
     var emulator by remember { mutableStateOf(cfg.emulatorId ?: "") }
 
@@ -395,7 +396,15 @@ private fun PlatformConfigDialog(p: PlatformDto, state: DesktopAppState, onDismi
         SaveHandlerRegistry.getAvailableEmulators(p.slug)
             .filter { it != SaveHandlerRegistry.EmulatorId.ANDROID_NATIVE }
     }
-    val defaultEmu = remember(p.slug) { SaveHandlerRegistry.getDefaultEmulator(p.slug) }
+    val profile = remember { state.config.saveProfile() }
+    val defaultEmu = remember(p.slug) { SaveHandlerRegistry.getDefaultEmulator(p.slug, profile) }
+    // Profile default for the chosen emulator, shown as the placeholder of the saves path.
+    val defaultSavesPath = SaveHandlerRegistry.getDefaultSavesPath(
+        emulatorId = emulator.ifBlank { defaultEmu.id },
+        platformSlug = p.slug,
+        retroArchBase = "",
+        profile = profile,
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -424,6 +433,7 @@ private fun PlatformConfigDialog(p: PlatformDto, state: DesktopAppState, onDismi
                     { savesPath = it },
                     label = { Text(tr("platforms.config.saves_path")) },
                     singleLine = true,
+                    placeholder = { Text(defaultSavesPath) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(12.dp))
@@ -1293,6 +1303,9 @@ fun SettingsScreen(state: DesktopAppState) {
     val romsRoot = remember { mutableStateOf(state.config.romsRoot) }
     val connected by state.connected.collectAsState()
     var showApiKey by remember { mutableStateOf(false) }
+    val pairing by state.pairing.collectAsState()
+    // API-key mode is upstream's path, kept for other servers; pairing is the default.
+    var useApiKey by remember { mutableStateOf(!pairing.paired && state.config.apiKey.isNotBlank()) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).widthIn(max = SettingsMaxWidth),
@@ -1302,6 +1315,10 @@ fun SettingsScreen(state: DesktopAppState) {
 
         // ── Servidor ──
         SettingsSection(icon = AppIcons.Storage, title = tr("settings.server.title")) {
+            if (pairing.paired) {
+                PairedStatus(state, pairing)
+                return@SettingsSection
+            }
             OutlinedTextField(
                 serverUrl.value,
                 { serverUrl.value = it },
@@ -1311,6 +1328,24 @@ fun SettingsScreen(state: DesktopAppState) {
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
+            Row {
+                FilterChip(
+                    selected = !useApiKey,
+                    onClick = { useApiKey = false },
+                    label = { Text(tr("desktop.pair.mode_pair")) },
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = useApiKey,
+                    onClick = { useApiKey = true },
+                    label = { Text(tr("desktop.pair.mode_api_key")) },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            if (!useApiKey) {
+                PairingForm(state, pairing, serverUrl.value)
+                return@SettingsSection
+            }
             OutlinedTextField(
                 apiKey.value,
                 { apiKey.value = it },
@@ -1624,5 +1659,92 @@ fun SettingsScreen(state: DesktopAppState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** "Paired as <name> · Remote install ON" + Unpair. */
+@Composable
+private fun PairedStatus(state: DesktopAppState, pairing: DesktopAppState.PairingUiState) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            AppIcons.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(tr("desktop.pair.status", pairing.deviceName), style = MaterialTheme.typography.titleSmall)
+            Text(
+                pairing.serverUrl,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedButton(onClick = state::unpair) { Text(tr("desktop.pair.unpair")) }
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        tr("desktop.pair.daemon_hint"),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** Device name + "Pair with RomM"; while waiting shows the code and the approval URL. */
+@Composable
+private fun PairingForm(state: DesktopAppState, pairing: DesktopAppState.PairingUiState, serverUrl: String) {
+    val deviceName = remember { mutableStateOf(DesktopPairing.defaultDeviceName()) }
+    val code = pairing.code
+    if (pairing.inProgress) {
+        if (code == null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(tr("desktop.pair.starting"))
+            }
+        } else {
+            Text(tr("desktop.pair.instructions"), style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Column {
+                    Text(code.userCode, style = MaterialTheme.typography.headlineMedium)
+                    Text(code.verificationUrl, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = {
+                    runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(code.verificationUrl)) }
+                }) {
+                    Icon(AppIcons.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(tr("desktop.pair.open_browser"))
+                }
+                Spacer(Modifier.width(12.dp))
+                CircularProgressIndicator(Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(tr("desktop.pair.waiting"), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = state::cancelPairing) { Text(tr("common.cancel")) }
+        return
+    }
+    OutlinedTextField(
+        deviceName.value,
+        { deviceName.value = it },
+        label = { Text(tr("desktop.pair.device_name")) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = { state.startPairing(serverUrl, deviceName.value) },
+        enabled = serverUrl.isNotBlank(),
+    ) { Text(tr("desktop.pair.button")) }
+    pairing.error?.let {
+        Spacer(Modifier.height(6.dp))
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     }
 }

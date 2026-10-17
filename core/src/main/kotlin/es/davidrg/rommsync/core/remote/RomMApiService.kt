@@ -102,6 +102,9 @@ interface RomMApiService {
         @Query("rom_id") romId: Int,
         @Query("emulator") emulator: String? = null,
         @Query("device_id") deviceId: String? = null,
+        /** Pairing key for negotiate: saves are matched on (rom_id, slot). */
+        @Query("slot") slot: String? = null,
+        @Query("content_hash") contentHash: String? = null,
         @Query("overwrite") overwrite: Boolean = true,
     ): ResponseBody
 
@@ -201,10 +204,10 @@ interface RomMApiService {
         @Query("device_id") deviceId: String? = null,
     ): List<ServerAssetDto>
 
-    /** GET /api/states?rom_id=… */
+    /** GET /api/states[?rom_id=…] — without rom_id, every state of the user. */
     @GET("api/states")
     suspend fun listStates(
-        @Query("rom_id") romId: Int,
+        @Query("rom_id") romId: Int? = null,
     ): List<ServerAssetDto>
 
     /** POST /api/states?rom_id=…&emulator=… — multipart part name must be `stateFile`. */

@@ -13,6 +13,13 @@ class SettingsRepository(private val dataStore: SettingsDataStore) {
     val syncChargingOnly: Flow<Boolean> = dataStore.syncChargingOnly
     val skippedVersion: Flow<String> = dataStore.skippedVersion
     val conflictPolicy: Flow<String> = dataStore.conflictPolicy
+    val manualApiKey: Flow<String> = dataStore.manualApiKey
+    val pairedDevice: Flow<PairedDeviceSettings?> = dataStore.pairedDevice
+
+    suspend fun getPairedDevice(): PairedDeviceSettings? = dataStore.getPairedDevice()
+    suspend fun savePairedDevice(device: PairedDeviceSettings) = dataStore.savePairedDevice(device)
+    suspend fun clearPairedDevice() = dataStore.clearPairedDevice()
+    suspend fun deviceIdentifier(): String = dataStore.deviceIdentifier()
 
     suspend fun setServerUrl(url: String) = dataStore.setServerUrl(url)
     suspend fun setApiKey(key: String) = dataStore.setApiKey(key)

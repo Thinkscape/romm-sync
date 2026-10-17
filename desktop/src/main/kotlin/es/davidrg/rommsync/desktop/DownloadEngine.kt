@@ -2,8 +2,10 @@ package es.davidrg.rommsync.desktop
 
 import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.i18n.tr
+import es.davidrg.rommsync.core.install.planInstall
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.RomDto
+import es.davidrg.rommsync.core.remote.dto.RomFileDto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
@@ -49,6 +51,12 @@ class DownloadEngine(
             val mapped = PlatformFolders.platformDir(romsRoot.absolutePath, slug)
                 ?: return@withContext Result(tr("download.unsupported_platform", slug), failed = true)
             mapped.also { it.mkdirs() }
+        }
+
+        // Multi-file roms go file by file into `<platform>/<fs_name>/` (`<fs_name>.m3u/`
+        // when the set has an .m3u), the same layout RomM pushes produce.
+        if (rom.files.size > 1 || rom.hasMultipleFiles) {
+            return@withContext downloadGameFolder(rom, targetDir, coroutineContext[Job], onProgress)
         }
 
         // Fichero objetivo y parcial previo (para reanudar) se calculan ANTES
@@ -110,6 +118,82 @@ class DownloadEngine(
 
         registerInLibrary(rom, target)
         return@withContext Result(tr("download.done_path", rom.name, target.absolutePath))
+    }
+
+    /** Multi-file rom: each RomFile to its place under the game folder, resumable `.part` + size/hash check. */
+    private suspend fun downloadGameFolder(
+        rom: RomDto,
+        platformDir: File,
+        job: Job?,
+        onProgress: (Progress) -> Unit,
+    ): Result {
+        val plan = try {
+            planInstall(api.getRomDetail(rom.id), emptyList(), platformDir)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Result(tr("common.error_detail", e.message), failed = true)
+        }
+        val total = plan.targets.sumOf { it.file.fileSizeBytes }
+        var done = 0L
+        for (target in plan.targets) {
+            val file = target.file
+            val dest = target.target
+            if (dest.isFile && (file.fileSizeBytes <= 0 || dest.length() == file.fileSizeBytes) && hashMatches(file, dest) != false) {
+                done += file.fileSizeBytes
+                continue
+            }
+            dest.parentFile?.mkdirs()
+            val part = File(dest.path + ".part")
+            val existing = if (part.isFile) part.length() else 0L
+            val response = api.downloadRomFile(file.id, file.fileName, if (existing > 0) "bytes=$existing-" else null)
+            if (!response.isSuccessful) {
+                response.errorBody()?.close()
+                return Result(tr("download.http_error", response.code()), failed = true)
+            }
+            val body = response.body() ?: return Result(tr("download.empty_response"), failed = true)
+            val resumed = existing > 0 && response.code() == 206
+            val base = done + if (resumed) existing else 0L
+            val counting = CountingInputStream(body.byteStream(), base) { read, speed ->
+                if (job?.isActive == false) throw CancellationException("Descarga cancelada")
+                onProgress(Progress(read, total, speed))
+            }
+            counting.use { input -> FileOutputStream(part, resumed).use { out -> input.copyTo(out) } }
+            if ((file.fileSizeBytes > 0 && part.length() != file.fileSizeBytes) || hashMatches(file, part) == false) {
+                part.delete() // corrupt: never leave it for the next resume
+                return Result(tr("desktop.download.file_corrupt", file.fileName), failed = true)
+            }
+            if (!part.renameTo(dest)) {
+                part.copyTo(dest, overwrite = true)
+                part.delete()
+            }
+            done += file.fileSizeBytes
+        }
+        library?.upsertRom(
+            DesktopLibrary.RomEntry(
+                romId = rom.id,
+                name = rom.name,
+                fileName = rom.fileName,
+                platformSlug = rom.platformSlug ?: "unknown",
+                localPath = plan.primary.absolutePath,
+            ),
+        )
+        return Result(tr("download.done_path", rom.name, plan.primary.absolutePath))
+    }
+
+    /** sha1 (else md5) check of [local] against [file]; null when RomM reports no hash. */
+    private fun hashMatches(file: RomFileDto, local: File): Boolean? {
+        val (algo, expected) = when {
+            !file.sha1Hash.isNullOrBlank() -> "SHA-1" to file.sha1Hash
+            !file.md5Hash.isNullOrBlank() -> "MD5" to file.md5Hash
+            else -> return null
+        }
+        val md = java.security.MessageDigest.getInstance(algo)
+        java.security.DigestInputStream(local.inputStream(), md).use { dis ->
+            val buf = ByteArray(64 * 1024)
+            while (dis.read(buf) >= 0) { /* consume */ }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }.equals(expected, ignoreCase = true)
     }
 
     /**

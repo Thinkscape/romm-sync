@@ -64,6 +64,7 @@ import es.davidrg.rommsync.data.sync.ConflictInfo
 import es.davidrg.rommsync.data.sync.FailedOpInfo
 import es.davidrg.rommsync.data.sync.SyncState
 import es.davidrg.rommsync.ui.components.FolderPickerDialog
+import es.davidrg.rommsync.ui.viewmodel.SaveAccessItem
 import es.davidrg.rommsync.ui.viewmodel.SavePreviewItem
 import es.davidrg.rommsync.ui.viewmodel.SyncViewModel
 import es.davidrg.rommsync.util.isIgnoringBatteryOptimizations
@@ -110,9 +111,12 @@ fun SyncScreen() {
     val conflicts by viewModel.conflicts.collectAsState()
     val failedOps by viewModel.failedOps.collectAsState()
     val resolvingConflict by viewModel.resolvingConflict.collectAsState()
+    val saveAccess by viewModel.saveAccess.collectAsState()
 
     var retroArchPath by remember { mutableStateOf("") }
     var showFolderPicker by remember { mutableStateOf(false) }
+    // Save folder being granted through the folder picker (SAF), null = none.
+    var grantPath by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(retroArchBasePath) {
         if (retroArchPath.isEmpty() && retroArchBasePath.isNotEmpty()) {
@@ -251,6 +255,26 @@ fun SyncScreen() {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+
+            // -- Save folder access per emulator (red = unreadable, needs a grant)
+            if (saveAccess.isNotEmpty()) {
+                item(key = "save_access_section") {
+                    SyncSection(
+                        icon = Icons.Filled.Folder,
+                        title = tr("android.sync.access.title"),
+                    ) {
+                        Text(
+                            tr("android.sync.access.hint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        saveAccess.forEach { access ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SaveAccessRow(access, onGrant = { grantPath = access.path })
+                        }
+                    }
                 }
             }
 
@@ -471,6 +495,62 @@ fun SyncScreen() {
                 showFolderPicker = false
             },
         )
+    }
+
+    // Grant access to an emulator's save folder: the picker's system (SAF)
+    // selector stores the grant per path; the saves path itself is unchanged.
+    grantPath?.let { path ->
+        FolderPickerDialog(
+            initialPath = path,
+            onDismiss = {
+                grantPath = null
+                viewModel.refreshSaveAccess()
+            },
+            onSelect = {
+                grantPath = null
+                viewModel.refreshSaveAccess()
+            },
+        )
+    }
+}
+
+@Composable
+private fun SaveAccessRow(access: SaveAccessItem, onGrant: () -> Unit) {
+    val okColor = androidx.compose.ui.graphics.Color(0xFF2E7D32)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (access.usable) Icons.Filled.CheckCircle else Icons.Filled.Error,
+            contentDescription = null,
+            tint = if (access.usable) okColor else MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.size(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "${access.emulatorName} · ${access.platformSlugs.joinToString(", ")}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (access.usable) okColor else MaterialTheme.colorScheme.error,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                if (access.usable) access.path else tr("android.sync.access.unreadable", access.path),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (!access.usable) {
+            Spacer(modifier = Modifier.size(8.dp))
+            FilledTonalButton(onClick = onGrant) {
+                Text(tr("android.sync.access.grant"), maxLines = 1)
+            }
+        }
     }
 }
 
@@ -782,6 +862,10 @@ private fun ConflictItemRow(
         )
         Text(
             buildString {
+                if (conflict.kind == ConflictInfo.KIND_STATE) {
+                    append(tr("android.sync.conflict.state_label"))
+                    append(" ")
+                }
                 append(conflict.fileName)
                 conflict.serverUpdatedAt?.let {
                     append("  ·  ")

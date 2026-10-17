@@ -1,6 +1,9 @@
 package es.davidrg.rommsync.desktop
 
+import es.davidrg.rommsync.core.sync.platform.SavePaths
+import es.davidrg.rommsync.core.sync.platform.SaveProfile
 import java.io.File
+import java.util.UUID
 import java.util.prefs.Preferences
 
 /** Configuración persistente de la app desktop (java.util.prefs, sin Android). */
@@ -19,9 +22,70 @@ object DesktopConfig {
         get() = prefs.get("roms_root", defaultRomsRoot())
         set(v) = prefs.put("roms_root", v)
 
+    /** Device id registered through `POST /api/devices` (API-key mode only). */
     var deviceId: String?
         get() = prefs.get("device_id", null)
         set(v) = if (v == null) prefs.remove("device_id") else prefs.put("device_id", v)
+
+    // ── Pairing (RomM device authorization) ─────────────────────────────
+
+    /**
+     * Stable per-install identifier sent as `client_device_identifier`; generated
+     * once. Re-pairing with it updates the same Device row in RomM.
+     */
+    val deviceIdentifier: String
+        @Synchronized get() = prefs.get(KEY_IDENTIFIER, null) ?: UUID.randomUUID().toString().also {
+            prefs.put(KEY_IDENTIFIER, it)
+            flush()
+        }
+
+    /** Device-bound `rmm_…` token obtained by pairing ("" = not paired). */
+    val pairedToken: String get() = prefs.get(KEY_PAIRED_TOKEN, "")
+
+    /** RomM device id the paired token is bound to ("" = not paired). */
+    val pairedDeviceId: String get() = prefs.get(KEY_PAIRED_DEVICE_ID, "")
+
+    /** Name the device was paired under (shown in settings). */
+    val pairedDeviceName: String get() = prefs.get(KEY_PAIRED_NAME, "")
+
+    /** Server the device was paired with. */
+    val pairedBaseUrl: String get() = prefs.get(KEY_PAIRED_URL, "")
+
+    val isPaired: Boolean get() = pairedToken.isNotBlank() && pairedDeviceId.isNotBlank() && pairedBaseUrl.isNotBlank()
+
+    /** Server every API call goes to: the paired server when paired, else the API-key server. */
+    val effectiveServerUrl: String get() = if (isPaired) pairedBaseUrl else serverUrl
+
+    /** Bearer credential: the paired token when paired, else the API key. */
+    val authToken: String get() = if (isPaired) pairedToken else apiKey
+
+    fun savePairing(baseUrl: String, name: String, token: String, deviceId: String) {
+        prefs.put(KEY_PAIRED_URL, baseUrl)
+        prefs.put(KEY_PAIRED_NAME, name)
+        prefs.put(KEY_PAIRED_TOKEN, token)
+        prefs.put(KEY_PAIRED_DEVICE_ID, deviceId)
+        prefs.put("server_url", baseUrl)
+        flush()
+    }
+
+    /** Forgets the paired token locally (the device stays in RomM until deleted there). */
+    fun clearPairing() {
+        prefs.remove(KEY_PAIRED_TOKEN)
+        prefs.remove(KEY_PAIRED_DEVICE_ID)
+        prefs.remove(KEY_PAIRED_NAME)
+        prefs.remove(KEY_PAIRED_URL)
+        flush()
+    }
+
+    /** Writes pending preference changes to disk (the daemon exits right after pairing). */
+    fun flush() {
+        runCatching { prefs.flush() }
+    }
+
+    /** Re-reads preferences written by another process (GUI ↔ daemon). */
+    fun sync() {
+        runCatching { prefs.sync() }
+    }
 
     val configDir: File
         get() = File(System.getProperty("user.home"), ".config/romm-sync").also { it.mkdirs() }
@@ -29,8 +93,21 @@ object DesktopConfig {
     val cacheDir: File
         get() = File(System.getProperty("user.home"), ".cache/romm-sync").also { it.mkdirs() }
 
-    private fun defaultRomsRoot(): String =
-        File(System.getProperty("user.home", "."), "ROMs").absolutePath
+    /** ES-DE's `ROMDirectory` when set, else `$HOME/Emulation/roms` (EmuDeck). */
+    private fun defaultRomsRoot(): String {
+        val home = System.getProperty("user.home", ".")
+        return esdeRomDirectory(File(home, "ES-DE/settings/es_settings.xml"), home)
+            ?: File(home, "Emulation/roms").absolutePath
+    }
+
+    /**
+     * EmuDeck layout profile when `<romsRoot>/../saves` exists (the Steam Deck's
+     * `Emulation/saves`), else null (upstream per-emulator defaults).
+     */
+    fun saveProfile(): SaveProfile? {
+        val saves = File(romsRoot).absoluteFile.parentFile?.let { File(it, "saves") } ?: return null
+        return if (saves.isDirectory) SavePaths.emudeck(saves.path) else null
+    }
 
     /** Slugs de plataformas ocultas por el usuario (CSV). */
     var hiddenPlatforms: String
@@ -77,6 +154,30 @@ object DesktopConfig {
         get() = prefs.get("skipped_version", "")
         set(v) = prefs.put("skipped_version", v)
 
-    /** Versión de la app desktop (para el comprobador de actualizaciones). */
-    const val appVersion: String = "0.8.6"
+    /** Versión de la app desktop (para el comprobador de actualizaciones). Keep equal to app versionName. */
+    const val appVersion: String = "1.0.0-thinkscape.1"
+
+    private const val KEY_IDENTIFIER = "device.identifier"
+    private const val KEY_PAIRED_TOKEN = "paired.token"
+    private const val KEY_PAIRED_DEVICE_ID = "paired.device_id"
+    private const val KEY_PAIRED_NAME = "paired.device_name"
+    private const val KEY_PAIRED_URL = "paired.base_url"
+
+    private val ROM_DIRECTORY = Regex("""<string\s+name="ROMDirectory"\s+value="([^"]*)"\s*/>""")
+
+    /**
+     * `ROMDirectory` from ES-DE's `es_settings.xml` (not well-formed XML: no root
+     * element, so it is matched line-wise). `~` and `%HOMEPATH%` expand to [home];
+     * `%ROMPATH%` to ES-DE's default `~/ROMs`. Null when unset or unreadable.
+     */
+    internal fun esdeRomDirectory(settings: File, home: String): String? {
+        val text = runCatching { settings.readText() }.getOrNull() ?: return null
+        val raw = ROM_DIRECTORY.find(text)?.groupValues?.get(1)?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        val expanded = raw
+            .replace("%ROMPATH%", File(home, "ROMs").path)
+            .replace("%HOMEPATH%", home)
+            .let { if (it == "~" || it.startsWith("~/")) home + it.removePrefix("~") else it }
+        return File(expanded).absoluteFile.normalize().path
+    }
 }

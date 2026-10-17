@@ -32,6 +32,8 @@ data class DeviceRegistrationResponse(
 data class NegotiateRequest(
     @Json(name = "device_id") val deviceId: String,
     @Json(name = "saves") val saves: List<ClientSaveState>,
+    /** ROMs installed on this device; scopes offered downloads to them (null = whole library). */
+    @Json(name = "rom_ids") val romIds: List<Int>? = null,
 )
 
 @JsonClass(generateAdapter = true)

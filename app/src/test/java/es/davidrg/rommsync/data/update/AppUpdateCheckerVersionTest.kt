@@ -44,4 +44,21 @@ class AppUpdateCheckerVersionTest {
     @Test fun `garbage segments parse as zero`() {
         assertThat(AppUpdateChecker.isNewer("vx.y.z", "0.0.0")).isFalse()
     }
+
+    @Test fun `fork suffix ordering follows semver prerelease rules`() {
+        assertThat(AppUpdateChecker.isNewer("v1.0.0-thinkscape.2", "1.0.0-thinkscape.1")).isTrue()
+        assertThat(AppUpdateChecker.isNewer("v1.0.0-thinkscape.1", "1.0.0-thinkscape.2")).isFalse()
+        assertThat(AppUpdateChecker.isNewer("v1.0.0-thinkscape.10", "1.0.0-thinkscape.9")).isTrue()
+        assertThat(AppUpdateChecker.isNewer("v1.0.0-thinkscape.1", "1.0.0-thinkscape.1")).isFalse()
+    }
+
+    @Test fun `core version bump beats fork suffix`() {
+        assertThat(AppUpdateChecker.isNewer("v1.0.1-thinkscape.1", "1.0.0-thinkscape.7")).isTrue()
+        assertThat(AppUpdateChecker.isNewer("v1.0.0-thinkscape.7", "1.0.1-thinkscape.1")).isFalse()
+    }
+
+    @Test fun `release is newer than its prerelease`() {
+        assertThat(AppUpdateChecker.isNewer("v1.0.0", "1.0.0-thinkscape.3")).isTrue()
+        assertThat(AppUpdateChecker.isNewer("v1.0.0-thinkscape.3", "1.0.0")).isFalse()
+    }
 }

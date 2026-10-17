@@ -36,6 +36,8 @@ data class RomDetailDto(
     @Json(name = "files") val files: List<RomFileDto> = emptyList(),
     /** Library-relative folder holding the rom (e.g. `roms/gba/usb31`). */
     @Json(name = "fs_path") val fsPath: String? = null,
+    @Json(name = "platform_id") val platformId: Int = 0,
+    @Json(name = "name") val name: String? = null,
 )
 
 /**

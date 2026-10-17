@@ -17,6 +17,8 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import es.davidrg.rommsync.data.sync.SyncedHashStore
 import es.davidrg.rommsync.data.sync.SavePathAccess
 import es.davidrg.rommsync.core.sync.platform.SaveHandlerRegistry
+import es.davidrg.rommsync.core.sync.platform.SyncSupport
+import es.davidrg.rommsync.data.sync.SavePathResolver
 import android.content.Context
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +39,17 @@ data class SavePreviewItem(
     val platformSlug: String,
     val fileName: String,
     val lastModified: Long,
+)
+
+/**
+ * Whether this device can read one emulator's save folder (direct, root or a
+ * saved SAF grant). Unreadable folders need "Grant folder access".
+ */
+data class SaveAccessItem(
+    val emulatorName: String,
+    val platformSlugs: List<String>,
+    val path: String,
+    val usable: Boolean,
 )
 
 class SyncViewModel(
@@ -92,6 +105,10 @@ class SyncViewModel(
     private val _resolvingConflict = MutableStateFlow<String?>(null)
     val resolvingConflict: StateFlow<String?> = _resolvingConflict.asStateFlow()
 
+    /** Save folders of the emulators in use (platforms with downloaded ROMs) and their access state. */
+    private val _saveAccess = MutableStateFlow<List<SaveAccessItem>>(emptyList())
+    val saveAccess: StateFlow<List<SaveAccessItem>> = _saveAccess.asStateFlow()
+
     /** Carga los conflictos y fallidos del último sync persistido. */
     init {
         viewModelScope.launch {
@@ -104,6 +121,7 @@ class SyncViewModel(
                 _failedOps.value = parseFailuresJson(json)
             }
         }
+        refreshSaveAccess()
     }
 
     /** Resuelve un conflicto forzando la dirección elegida. */
@@ -168,7 +186,47 @@ class SyncViewModel(
             }
             _localSaves.value = saves
             _isScanning.value = false
+            _saveAccess.value = withContext(Dispatchers.IO) { computeSaveAccess() }
         }
+    }
+
+    /** Re-checks save folder access (e.g. after a folder grant). */
+    fun refreshSaveAccess() {
+        viewModelScope.launch {
+            _saveAccess.value = withContext(Dispatchers.IO) { computeSaveAccess() }
+        }
+    }
+
+    private suspend fun computeSaveAccess(): List<SaveAccessItem> {
+        val retroArchBase = settingsRepository.retroArchBasePath.first()
+        val profile = SavePathResolver.deviceProfile(settingsRepository.settings.first().romsRootPath)
+        val platformConfigs = platformDao.getAllPlatformsBlocking().associateBy { it.slug }
+        data class Entry(val emulator: String, val slug: String, val path: String)
+        val entries = romDao.getAllDownloadedRoms()
+            .filterNot { it.excludedFromSync }
+            .mapNotNull { rom ->
+                val config = platformConfigs[rom.platformSlug]
+                if (SavePathResolver.syncSupport(rom.platformSlug, config, profile) !is SyncSupport.Supported) {
+                    return@mapNotNull null
+                }
+                Entry(
+                    emulator = SavePathResolver.emulatorFor(rom.platformSlug, config, profile),
+                    slug = rom.platformSlug,
+                    path = SavePathResolver.romBasePath(rom, config, retroArchBase, profile),
+                )
+            }
+        return entries.groupBy { it.emulator to it.path }
+            .map { (key, list) ->
+                val (emulator, path) = key
+                SaveAccessItem(
+                    emulatorName = SaveHandlerRegistry.EmulatorId.entries.find { it.id == emulator }?.displayName
+                        ?: emulator,
+                    platformSlugs = list.map { it.slug }.distinct().sorted(),
+                    path = path,
+                    usable = SavePathAccess.isUsable(path, appContext),
+                )
+            }
+            .sortedWith(compareBy<SaveAccessItem>({ it.usable }, { it.emulatorName }))
     }
 
     private suspend fun scanSavesFromDisk(): List<SavePreviewItem> {
@@ -183,6 +241,7 @@ class SyncViewModel(
         if (downloadedRoms.isEmpty()) return emptyList()
 
         val platformConfigs = platformDao.getAllPlatformsBlocking().associateBy { it.slug }
+        val profile = SavePathResolver.deviceProfile(settingsRepository.settings.first().romsRootPath)
         val results = mutableListOf<SavePreviewItem>()
         val warnings = mutableListOf<String>()
 
@@ -190,19 +249,11 @@ class SyncViewModel(
             if (rom.excludedFromSync) continue
 
             val config = platformConfigs[rom.platformSlug]
-            val handler = SaveHandlerRegistry.getHandler(
-                platformSlug = rom.platformSlug,
-                emulatorId = config?.emulatorId,
-            )
+            // Same resolution as SyncCoordinator; unsupported platforms are never synced.
+            if (SavePathResolver.syncSupport(rom.platformSlug, config, profile) !is SyncSupport.Supported) continue
+            val handler = SavePathResolver.handlerFor(rom.platformSlug, config, profile)
 
-            val effectiveBasePath = rom.savesPathOverride?.takeIf { it.isNotBlank() }
-                ?: config?.savesPathOverride?.takeIf { it.isNotBlank() }
-                ?: SaveHandlerRegistry.getDefaultSavesPath(
-                    emulatorId = config?.emulatorId
-                        ?: SaveHandlerRegistry.getDefaultEmulator(rom.platformSlug).id,
-                    platformSlug = rom.platformSlug,
-                    retroArchBase = retroArchBase,
-                )
+            val effectiveBasePath = SavePathResolver.romBasePath(rom, config, retroArchBase, profile)
 
             // Ruta configurada explícitamente pero ilegible: el handler no
             // encontrará nada y el sync parecería "al día" sin buscar aquí.

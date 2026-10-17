@@ -1,6 +1,10 @@
 package es.davidrg.rommsync.desktop
 
+import es.davidrg.rommsync.core.auth.PairingCode
+import es.davidrg.rommsync.core.auth.PairingDeniedException
+import es.davidrg.rommsync.core.auth.PairingExpiredException
 import es.davidrg.rommsync.core.i18n.tr
+import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.PlatformDto
@@ -146,9 +150,83 @@ class DesktopAppState(private val scope: CoroutineScope) {
     fun connect(serverUrl: String, apiKey: String, silent: Boolean = false) {
         config.serverUrl = serverUrl
         config.apiKey = apiKey
-        val svc = NetworkModule.createApiService(serverUrl, apiKey)
-        api = svc
+        connectStored(silent)
+    }
+
+    /** Connects with the stored credentials: the paired token when paired, else the API key. */
+    private fun connectStored(silent: Boolean) {
+        val url = config.effectiveServerUrl
+        val token = config.authToken
+        if (url.isBlank() || token.isBlank()) {
+            api = null
+            _connected.value = false
+            return
+        }
+        api = NetworkModule.createApiService(url, token)
         refreshPlatforms(silent)
+    }
+
+    // ── Pairing (RomM device authorization) ─────────────────────────────
+    // The GUI pairs and syncs but never runs an InstallClient: claiming installs
+    // is the daemon's job (`--daemon`), and two claimers for one device would
+    // race for the same requests.
+
+    data class PairingUiState(
+        val paired: Boolean,
+        val deviceName: String,
+        val serverUrl: String,
+        val inProgress: Boolean = false,
+        val code: PairingCode? = null,
+        val error: String? = null,
+    )
+
+    private fun pairingSnapshot() = PairingUiState(
+        paired = config.isPaired,
+        deviceName = config.pairedDeviceName,
+        serverUrl = config.pairedBaseUrl,
+    )
+
+    private val _pairing = MutableStateFlow(pairingSnapshot())
+    val pairing: StateFlow<PairingUiState> = _pairing
+
+    private var pairingJob: Job? = null
+
+    fun startPairing(serverUrl: String, deviceName: String) {
+        pairingJob?.cancel()
+        _pairing.value = pairingSnapshot().copy(inProgress = true)
+        pairingJob = scope.launch {
+            try {
+                DesktopPairing.pair(serverUrl, deviceName.ifBlank { DesktopPairing.defaultDeviceName() }) { code ->
+                    _pairing.value = _pairing.value.copy(code = code)
+                }
+                _pairing.value = pairingSnapshot()
+                connectStored(silent = false)
+                showSnackbar(tr("desktop.pair.done", config.pairedDeviceName))
+            } catch (e: CancellationException) {
+                _pairing.value = pairingSnapshot()
+                throw e
+            } catch (e: PairingExpiredException) {
+                _pairing.value = pairingSnapshot().copy(error = tr("desktop.pair.expired"))
+            } catch (e: PairingDeniedException) {
+                _pairing.value = pairingSnapshot().copy(error = tr("desktop.pair.denied"))
+            } catch (e: Exception) {
+                _pairing.value = pairingSnapshot().copy(error = tr("desktop.pair.error", e.message))
+            }
+        }
+    }
+
+    fun cancelPairing() {
+        pairingJob?.cancel()
+        pairingJob = null
+        _pairing.value = pairingSnapshot()
+    }
+
+    /** Forgets the paired token here; the device stays in RomM (delete it there). Falls back to the API key if set. */
+    fun unpair() {
+        cancelPairing()
+        config.clearPairing()
+        _pairing.value = pairingSnapshot()
+        connectStored(silent = true)
     }
 
     private fun refreshPlatforms(silent: Boolean = false) {
@@ -170,6 +248,10 @@ class DesktopAppState(private val scope: CoroutineScope) {
 
     /** Recarga plataformas + ROMs de la vista actual (botón refrescar / F5). */
     fun refreshCurrentView() {
+        // Pick up roms the daemon installed while the GUI was open.
+        if (downloadedIds.addAll(library.roms().map { it.romId })) {
+            _downloadedVersion.value = _downloadedVersion.value + 1
+        }
         if (_connected.value || api != null) {
             refreshPlatforms(silent = true)
             when (_section.value) {
@@ -268,10 +350,12 @@ class DesktopAppState(private val scope: CoroutineScope) {
     /** Config persistida de una plataforma (emulator, saves, carpeta ROMs). */
     fun platformConfig(slug: String) = library.platform(slug)
 
-    /** Fija la carpeta de ROMs relativa al root (vacío = slug por defecto). */
+    /** Fija la carpeta de ROMs relativa al root (vacío = carpeta del launcher por defecto). */
     fun setPlatformFolder(slug: String, folder: String) {
         val cur = library.platform(slug)
-        library.upsertPlatform(cur.copy(romsFolderOverride = folder.ifBlank { null }))
+        // The default launcher folder is not an override: keep following the mapping table.
+        val override = folder.trim().takeIf { it.isNotBlank() && it != PlatformFolders.folderFor(slug) }
+        library.upsertPlatform(cur.copy(romsFolderOverride = override))
     }
 
     /** Fija la ruta base de saves (vacío = default del emulador). */
@@ -962,8 +1046,8 @@ class DesktopAppState(private val scope: CoroutineScope) {
         }
         refreshLocalStats()
         if (config.autoSyncMinutes > 0) restartAutoSync()
-        if (config.serverUrl.isNotBlank() && config.apiKey.isNotBlank()) {
-            connect(config.serverUrl, config.apiKey, silent = true)
+        if (config.effectiveServerUrl.isNotBlank() && config.authToken.isNotBlank()) {
+            connectStored(silent = true)
         }
     }
 }

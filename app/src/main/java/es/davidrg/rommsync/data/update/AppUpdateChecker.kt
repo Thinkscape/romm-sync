@@ -101,7 +101,7 @@ class AppUpdateChecker(
     }
 
     companion object {
-        const val OWNER = "davidadrianrg"
+        const val OWNER = "Thinkscape"
         const val REPO = "romm-sync"
         private const val USER_AGENT = "RomM-Sync-Android-Updater"
 
@@ -117,27 +117,51 @@ class AppUpdateChecker(
 
         /**
          * Compares two version strings where the remote tag may carry a `v`
-         * prefix and extra build metadata ("1.2.3+meta" → "1.2.3").
+         * prefix and build metadata ("1.2.3+meta" → "1.2.3"). Pre-release
+         * suffixes follow semver ordering, so fork builds compare correctly:
+         * `1.0.0-thinkscape.2` > `1.0.0-thinkscape.1`, and a plain `1.0.0`
+         * is newer than any `1.0.0-…` pre-release.
          * Returns true when [remote] is strictly newer than [current].
          */
-        fun isNewer(remote: String, current: String): Boolean {
-            val r = parse(remote)
-            val c = parse(current)
+        fun isNewer(remote: String, current: String): Boolean = compareVersions(remote, current) > 0
+
+        internal fun compareVersions(a: String, b: String): Int {
+            val (coreA, preA) = split(a)
+            val (coreB, preB) = split(b)
             for (i in 0 until 3) {
-                if (r[i] != c[i]) return r[i] > c[i]
+                if (coreA[i] != coreB[i]) return coreA[i].compareTo(coreB[i])
             }
-            return false
+            return comparePreRelease(preA, preB)
         }
 
-        private fun parse(version: String): List<Int> {
+        private fun split(version: String): Pair<List<Int>, List<String>> {
             val cleaned = version.trim()
                 .removePrefix("v")
                 .removePrefix("V")
-                .substringBefore('-')
                 .substringBefore('+')
-            return cleaned.split('.').map { part ->
+            val core = cleaned.substringBefore('-')
+            val pre = if ('-' in cleaned) cleaned.substringAfter('-').split('.').filter { it.isNotEmpty() } else emptyList()
+            val numbers = core.split('.').map { part ->
                 part.filter(Char::isDigit).takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
             }.let { if (it.size >= 3) it.take(3) else it + List(3 - it.size) { 0 } }
+            return numbers to pre
+        }
+
+        /** Semver §11: no pre-release > any pre-release; numeric ids numerically, others lexically. */
+        private fun comparePreRelease(a: List<String>, b: List<String>): Int {
+            if (a.isEmpty() || b.isEmpty()) return b.size.coerceAtMost(1) - a.size.coerceAtMost(1)
+            for (i in 0 until minOf(a.size, b.size)) {
+                val na = a[i].toLongOrNull()
+                val nb = b[i].toLongOrNull()
+                val cmp = when {
+                    na != null && nb != null -> na.compareTo(nb)
+                    na != null -> -1
+                    nb != null -> 1
+                    else -> a[i].compareTo(b[i])
+                }
+                if (cmp != 0) return cmp
+            }
+            return a.size.compareTo(b.size)
         }
     }
 }

@@ -135,6 +135,9 @@ dependencies {
     // Image loading
     implementation(libs.coil.compose)
 
+    // QR code of the RomM pairing URL
+    implementation(libs.zxing.core)
+
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
 

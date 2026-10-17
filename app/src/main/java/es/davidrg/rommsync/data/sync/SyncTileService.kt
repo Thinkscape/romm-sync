@@ -22,6 +22,8 @@ class SyncTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        SaveSyncManager(applicationContext).triggerSync()
+        es.davidrg.rommsync.install.SyncTriggers.requestFullSync(applicationContext, "quick settings tile")
+        // Paired devices: make sure the push-install service is up and claim now.
+        es.davidrg.rommsync.install.InstallListenerService.start(applicationContext, drain = true)
     }
 }

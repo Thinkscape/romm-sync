@@ -74,6 +74,18 @@ import es.davidrg.rommsync.ui.viewmodel.ConfigViewModel
 import es.davidrg.rommsync.ui.viewmodel.LibraryScanState
 import es.davidrg.rommsync.util.hasAllFilesAccess
 import es.davidrg.rommsync.util.rememberNotificationPermissionState
+import android.os.Build
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import es.davidrg.rommsync.data.repository.PairedDeviceSettings
+import es.davidrg.rommsync.ui.viewmodel.PairingState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +102,7 @@ fun ConfigScreen() {
                     container.saveSyncManager,
                     container.appUpdateChecker,
                     container.apkInstallHelper,
+                    container.devicePairing,
                 )
             }
         }
@@ -108,15 +121,40 @@ fun ConfigScreen() {
     var apiKey by remember { mutableStateOf("") }
     var apiKeyVisible by remember { mutableStateOf(false) }
 
+    val pairedDevice by viewModel.pairedDevice.collectAsState()
+    val manualApiKey by viewModel.manualApiKey.collectAsState()
+    val pairingState by viewModel.pairingState.collectAsState()
+    var deviceName by remember { mutableStateOf(defaultDeviceName()) }
+    // null = not chosen in this session: pairing is the default unless an API key is already in use.
+    var useApiKeyChoice by remember { mutableStateOf<Boolean?>(null) }
+    val useApiKey = useApiKeyChoice ?: (pairedDevice == null && manualApiKey.isNotEmpty())
+
     // ── Folder picker dialog state ───────────────────────────────────────
     var showRomsPicker by remember { mutableStateOf(false) }
     var showSecondaryRomsPicker by remember { mutableStateOf(false) }
     var showEsdePicker by remember { mutableStateOf(false) }
     var showRetroHraiPicker by remember { mutableStateOf(false) }
 
-    LaunchedEffect(settings.serverUrl, settings.apiKey) {
+    LaunchedEffect(settings.serverUrl, manualApiKey) {
         if (serverUrl.isEmpty() && settings.serverUrl.isNotEmpty()) serverUrl = settings.serverUrl
-        if (apiKey.isEmpty() && settings.apiKey.isNotEmpty()) apiKey = settings.apiKey
+        if (apiKey.isEmpty() && manualApiKey.isNotEmpty()) apiKey = manualApiKey
+    }
+
+    // Paired: API clients use the device token and the push-install service runs.
+    LaunchedEffect(pairedDevice) {
+        val paired = pairedDevice ?: return@LaunchedEffect
+        serverUrl = paired.baseUrl
+        container.configureApi(paired.baseUrl, paired.token)
+        es.davidrg.rommsync.install.InstallListenerService.start(context, drain = true)
+    }
+
+    // Fresh pairing: ask once for the battery-optimisation exemption so the service survives.
+    LaunchedEffect(pairingState) {
+        if (pairingState is PairingState.Paired &&
+            !es.davidrg.rommsync.util.isIgnoringBatteryOptimizations(context)
+        ) {
+            runCatching { es.davidrg.rommsync.util.requestIgnoreBatteryOptimizations(context) }
+        }
     }
 
     // Cargar ruta de datos de ES-DE
@@ -191,12 +229,27 @@ fun ConfigScreen() {
                 icon = Icons.Outlined.Dns,
                 title = tr("settings.server.title"),
             ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !useApiKey,
+                        onClick = { useApiKeyChoice = false },
+                        label = { Text(tr("android.pair.mode_pair")) },
+                    )
+                    FilterChip(
+                        selected = useApiKey,
+                        onClick = { useApiKeyChoice = true },
+                        enabled = pairedDevice == null,
+                        label = { Text(tr("android.pair.mode_api_key")) },
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = serverUrl,
                     onValueChange = { serverUrl = it },
                     label = { Text(tr("settings.server.url")) },
                     placeholder = { Text(tr("settings.server.url_placeholder")) },
                     singleLine = true,
+                    enabled = pairedDevice == null,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     keyboardOptions = KeyboardOptions(
@@ -204,29 +257,46 @@ fun ConfigScreen() {
                     ),
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    label = { Text(tr("settings.server.api_key")) },
-                    placeholder = { Text("rmm_...") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    visualTransformation = if (apiKeyVisible) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
-                            Icon(
-                                imageVector = if (apiKeyVisible) Icons.Filled.VisibilityOff
-                                              else Icons.Filled.Visibility,
-                                contentDescription = tr("android.config.api_key_toggle"),
-                            )
-                        }
-                    },
-                )
+                if (useApiKey) {
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        label = { Text(tr("settings.server.api_key")) },
+                        placeholder = { Text("rmm_...") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        visualTransformation = if (apiKeyVisible) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                                Icon(
+                                    imageVector = if (apiKeyVisible) Icons.Filled.VisibilityOff
+                                                  else Icons.Filled.Visibility,
+                                    contentDescription = tr("android.config.api_key_toggle"),
+                                )
+                            }
+                        },
+                    )
+                } else {
+                    PairingPanel(
+                        pairedDevice = pairedDevice,
+                        pairingState = pairingState,
+                        deviceName = deviceName,
+                        onDeviceNameChange = { deviceName = it },
+                        canPair = serverUrl.isNotBlank() && deviceName.isNotBlank(),
+                        onPair = { viewModel.startPairing(serverUrl, deviceName) },
+                        onCancel = { viewModel.cancelPairing() },
+                        onUnpair = {
+                            es.davidrg.rommsync.install.InstallListenerService.stop(context)
+                            viewModel.unpair()
+                            container.configureApi(serverUrl, manualApiKey)
+                        },
+                    )
+                }
             }
 
             // ── Almacenamiento ──────────────────────────────────────────
@@ -324,7 +394,7 @@ fun ConfigScreen() {
 
                 val isScanning = scanState is LibraryScanState.Scanning
                 FilledTonalButton(
-                    onClick = { viewModel.scanLibrary(serverUrl, apiKey) },
+                    onClick = { viewModel.scanLibrary(settings.serverUrl, settings.apiKey) },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = settings.isConfigured && !isScanning,
                 ) {
@@ -845,20 +915,22 @@ fun ConfigScreen() {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // ── Guardar ─────────────────────────────────────────────────
-            Button(
-                onClick = {
-                    viewModel.setServerUrl(serverUrl)
-                    viewModel.setApiKey(apiKey)
-                    container.configureApi(serverUrl, apiKey)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(14.dp),
-                enabled = serverUrl.isNotBlank() && apiKey.isNotBlank(),
-            ) {
-                Text(tr("android.config.save_button"), style = MaterialTheme.typography.labelLarge)
+            // ── Guardar (API-key mode; pairing stores its own settings) ──
+            if (useApiKey) {
+                Button(
+                    onClick = {
+                        viewModel.setServerUrl(serverUrl)
+                        viewModel.setApiKey(apiKey)
+                        container.configureApi(serverUrl, apiKey)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    enabled = serverUrl.isNotBlank() && apiKey.isNotBlank(),
+                ) {
+                    Text(tr("android.config.save_button"), style = MaterialTheme.typography.labelLarge)
+                }
             }
 
             if (settings.isConfigured) {
@@ -932,6 +1004,159 @@ fun ConfigScreen() {
                 showRetroHraiPicker = false
             },
         )
+    }
+}
+
+/** Pair-with-RomM panel: paired status + unpair, or name field, user code, URL and QR while waiting. */
+@Composable
+private fun PairingPanel(
+    pairedDevice: PairedDeviceSettings?,
+    pairingState: PairingState,
+    deviceName: String,
+    onDeviceNameChange: (String) -> Unit,
+    canPair: Boolean,
+    onPair: () -> Unit,
+    onCancel: () -> Unit,
+    onUnpair: () -> Unit,
+) {
+    if (pairedDevice != null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.CheckCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.size(6.dp))
+            Text(
+                tr("android.pair.paired_as", pairedDevice.deviceName),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            tr("android.pair.paired_hint"),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedButton(onClick = onUnpair, modifier = Modifier.fillMaxWidth()) {
+            Text(tr("android.pair.unpair"))
+        }
+        return
+    }
+
+    val busy = pairingState is PairingState.Starting || pairingState is PairingState.WaitingForApproval
+    OutlinedTextField(
+        value = deviceName,
+        onValueChange = onDeviceNameChange,
+        label = { Text(tr("android.pair.device_name")) },
+        singleLine = true,
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    when (pairingState) {
+        is PairingState.WaitingForApproval -> {
+            Text(
+                tr("android.pair.instructions"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                pairingState.code.userCode,
+                style = MaterialTheme.typography.headlineMedium,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SelectionContainer {
+                Text(
+                    pairingState.code.verificationUrl,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                QrCode(content = pairingState.code.verificationUrl, modifier = Modifier.size(200.dp))
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(tr("android.pair.waiting"), style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = onCancel) { Text(tr("common.cancel")) }
+            }
+        }
+        PairingState.Starting -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(tr("android.pair.starting"), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        else -> {
+            if (pairingState is PairingState.Failed) {
+                Text(
+                    pairingState.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            FilledTonalButton(onClick = onPair, enabled = canPair, modifier = Modifier.fillMaxWidth()) {
+                Text(tr("android.pair.button"))
+            }
+        }
+    }
+}
+
+/** Renders [content] as a QR code (ZXing) on a white background. */
+@Composable
+private fun QrCode(content: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(content) {
+        runCatching {
+            val size = 512
+            val matrix = QRCodeWriter().encode(
+                content,
+                BarcodeFormat.QR_CODE,
+                size,
+                size,
+                mapOf(EncodeHintType.MARGIN to 1),
+            )
+            val pixels = IntArray(size * size) { i ->
+                if (matrix[i % size, i / size]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+            }
+            android.graphics.Bitmap.createBitmap(pixels, size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                .asImageBitmap()
+        }.getOrNull()
+    } ?: return
+    Image(
+        bitmap = bitmap,
+        contentDescription = tr("android.pair.qr_description"),
+        modifier = modifier,
+    )
+}
+
+/** Default RomM device name: the product model (e.g. "AYN Thor"), with the manufacturer if the model lacks it. */
+private fun defaultDeviceName(): String {
+    val model = Build.MODEL.orEmpty().trim()
+    val maker = Build.MANUFACTURER.orEmpty().trim()
+    return when {
+        model.isEmpty() -> maker.ifEmpty { "Android" }
+        maker.isEmpty() || model.startsWith(maker, ignoreCase = true) -> model
+        else -> "$maker $model"
     }
 }
 

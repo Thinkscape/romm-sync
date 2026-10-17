@@ -56,6 +56,21 @@ class AppContainer(private val appContext: Context) {
 
     val apkInstallHelper = ApkInstallHelper(appContext)
 
+    /** Records push-installed roms in the downloaded-rom table so library and save sync see them. */
+    val installedRomStore: es.davidrg.rommsync.core.install.InstalledRomStore by lazy {
+        es.davidrg.rommsync.data.install.RoomInstalledRomStore(database.romDao())
+    }
+
+    /** RomM device pairing; its client carries no Authorization header (init/token are open endpoints). */
+    val devicePairing: es.davidrg.rommsync.core.auth.DevicePairing by lazy {
+        es.davidrg.rommsync.core.auth.DevicePairing(
+            okhttp3.OkHttpClient.Builder()
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+        )
+    }
+
     /**
      * Called when server settings change to refresh the API client.
      */
