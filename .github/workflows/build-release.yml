@@ -52,8 +52,11 @@ jobs:
           fi
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          sed -i "s/versionCode = .*/versionCode = ${{ github.run_number }}/" app/build.gradle.kts
-          echo "✅ tag=v${VERSION} versionCode=${{ github.run_number }} (run_number)"
+          # Fork releases: 1000 + run_number stays above the checked-in 1000 (local
+          # builds) and above upstream's codes, so CI APKs always install as updates.
+          CODE=$((1000 + ${{ github.run_number }}))
+          sed -i "s/versionCode = .*/versionCode = ${CODE}/" app/build.gradle.kts
+          echo "✅ tag=v${VERSION} versionCode=${CODE} (1000 + run_number)"
 
       # Rebuilding the same version must not fail on an existing tag/release:
       # delete the previous release and tag so the step below recreates them.
