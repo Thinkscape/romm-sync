@@ -14,6 +14,7 @@ import es.davidrg.rommsync.domain.model.Platform
 import es.davidrg.rommsync.domain.model.Rom
 import es.davidrg.rommsync.domain.model.RomFile
 import es.davidrg.rommsync.core.download.PlatformFolders
+import es.davidrg.rommsync.core.download.RomFileVerification
 import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -536,7 +537,9 @@ class RomRepository(
             platformSlug = platformSlug ?: "",
             coverUrlSmall = resolveCover(pathCoverSmall, urlCover, baseCoverUrl),
             coverUrlLarge = pathCoverLarge?.let { baseCoverUrl + it.removePrefix("/") },
-            files = files.map { RomFile(it.fileName, it.fileSizeBytes, it.sha1Hash) },
+            files = files.map {
+                RomFile(it.fileName, it.fileSizeBytes, RomFileVerification.expectedSha1(it.fileName, it.sha1Hash))
+            },
             isMulti = multi || hasMultipleFiles,
             revision = revision,
             regions = regions,

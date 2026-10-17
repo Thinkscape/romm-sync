@@ -1,6 +1,7 @@
 package es.davidrg.rommsync.core.install
 
 import es.davidrg.rommsync.core.download.PlatformFolders
+import es.davidrg.rommsync.core.download.RomFileVerification
 import es.davidrg.rommsync.core.remote.AuthInterceptor
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
@@ -466,11 +467,14 @@ class InstallClient(
         private fun requestIdOf(arg: Any?): String? =
             (arg as? JSONObject)?.opt("id")?.toString()
 
-        /** (JCA algorithm, expected hex, label) — SHA-1 preferred, MD5 as fallback. */
-        private fun expectedHash(file: RomFileDto): Triple<String, String, String>? = when {
-            !file.sha1Hash.isNullOrBlank() -> Triple("SHA-1", file.sha1Hash, "sha1")
-            !file.md5Hash.isNullOrBlank() -> Triple("MD5", file.md5Hash, "md5")
-            else -> null
+        /**
+         * (JCA algorithm, expected hex, label) — SHA-1 preferred, MD5 as fallback; null for
+         * archives, whose RomM hash covers the decompressed members, not the served bytes.
+         */
+        private fun expectedHash(file: RomFileDto): Triple<String, String, String>? {
+            RomFileVerification.expectedSha1(file.fileName, file.sha1Hash)?.let { return Triple("SHA-1", it, "sha1") }
+            RomFileVerification.expectedMd5(file.fileName, file.md5Hash)?.let { return Triple("MD5", it, "md5") }
+            return null
         }
 
         private fun hashFile(file: File, algorithm: String): String {

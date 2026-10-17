@@ -205,6 +205,44 @@ class InstallClientTest {
     }
 
     @Test
+    fun `zip with composite sha1 installs and is then already installed`() = runBlocking {
+        // RomM's sha1 for archives covers the decompressed members, never the served bytes.
+        val bytes = "raw-zip-bytes".toByteArray()
+        contents[81] = bytes
+        roms[8] = romJson(
+            8, "dos", "Keen 1.zip", "roms/dos",
+            listOf(fileJson(81, "Keen 1.zip", "roms/dos", bytes, sha1 = "ac3922" + "0".repeat(34))),
+        )
+        claim("r8" to (8 to listOf(81)))
+        val client = client()
+
+        client.drainNow()
+        assertArrayEquals(bytes, File(root, "dos/Keen 1.zip").readBytes())
+        assertEquals(listOf("r8" to """{"status":"done"}"""), reports.toList())
+
+        claim("r9" to (8 to listOf(81)))
+        client.drainNow()
+        assertEquals("r9" to """{"status":"already_installed"}""", reports.last())
+        assertEquals(1, downloadRequests().size)
+    }
+
+    @Test
+    fun `raw nes file with wrong sha1 still fails`() = runBlocking {
+        val bytes = "nes-bytes".toByteArray()
+        contents[91] = bytes
+        roms[9] = romJson(9, "nes", "Zelda.nes", "roms/nes", listOf(fileJson(91, "Zelda.nes", "roms/nes", bytes, sha1 = "f".repeat(40))))
+        claim("r10" to (9 to listOf(91)))
+
+        client().drainNow()
+
+        val body = reports.single().second
+        assertTrue(body, body.contains("\"status\":\"failed\""))
+        assertTrue(body, body.contains("sha1 mismatch for Zelda.nes"))
+        assertFalse(File(root, "nes/Zelda.nes").exists())
+        assertTrue(File(root, "nes").listFiles().orEmpty().none { it.name.endsWith(".part") })
+    }
+
+    @Test
     fun `unsupported platform fails with its slug`() = runBlocking {
         roms[5] = romJson(5, "zzz-unknown", "Thing.bin", "roms/zzz", listOf(fileJson(51, "Thing.bin", "roms/zzz", ByteArray(1))))
         claim("r5" to (5 to listOf(51)))

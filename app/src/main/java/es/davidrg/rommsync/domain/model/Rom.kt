@@ -48,6 +48,7 @@ data class RomFile(
     val filename: String,
     val size: Long,
     /** Hash del fichero según RomM (MD5/SHA-1 según config del servidor). */
+    // Null for archives: RomM hashes their decompressed members, not the served bytes.
     val hash: String? = null,
 )
 

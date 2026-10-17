@@ -1,6 +1,7 @@
 package es.davidrg.rommsync.desktop
 
 import es.davidrg.rommsync.core.download.PlatformFolders
+import es.davidrg.rommsync.core.download.RomFileVerification
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.install.planInstall
 import es.davidrg.rommsync.core.remote.RomMApiService
@@ -181,13 +182,11 @@ class DownloadEngine(
         return Result(tr("download.done_path", rom.name, plan.primary.absolutePath))
     }
 
-    /** sha1 (else md5) check of [local] against [file]; null when RomM reports no hash. */
+    /** sha1 (else md5) check of [local] against [file]; null when RomM reports no usable hash (none, or an archive). */
     private fun hashMatches(file: RomFileDto, local: File): Boolean? {
-        val (algo, expected) = when {
-            !file.sha1Hash.isNullOrBlank() -> "SHA-1" to file.sha1Hash
-            !file.md5Hash.isNullOrBlank() -> "MD5" to file.md5Hash
-            else -> return null
-        }
+        val (algo, expected) = RomFileVerification.expectedSha1(file.fileName, file.sha1Hash)?.let { "SHA-1" to it }
+            ?: RomFileVerification.expectedMd5(file.fileName, file.md5Hash)?.let { "MD5" to it }
+            ?: return null
         val md = java.security.MessageDigest.getInstance(algo)
         java.security.DigestInputStream(local.inputStream(), md).use { dis ->
             val buf = ByteArray(64 * 1024)
@@ -203,7 +202,8 @@ class DownloadEngine(
      */
     private fun verifyHash(rom: RomDto, target: File): String? {
         // Only a single-file rom downloads as that exact file; multi-file roms arrive zipped.
-        val expected = rom.files.singleOrNull()?.sha1Hash?.takeIf { it.isNotBlank() } ?: return null
+        val single = rom.files.singleOrNull() ?: return null
+        val expected = RomFileVerification.expectedSha1(single.fileName, single.sha1Hash) ?: return null
         val algo = when (expected.length) {
             32 -> "MD5"
             40 -> "SHA-1"
