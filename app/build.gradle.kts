@@ -84,8 +84,11 @@ ksp {
 }
 
 dependencies {
-    // Módulo compartido (handlers de saves, API RomM, PathMapper, RomHeaderIdReader)
-    implementation(project(":core"))
+    // Módulo compartido (handlers de saves, API RomM, PlatformFolders, RomHeaderIdReader)
+    // org.json ships with Android; socket.io-client's copy would duplicate platform classes.
+    implementation(project(":core")) {
+        exclude(group = "org.json", module = "json")
+    }
 
     // AndroidX Core
     implementation(libs.androidx.core.ktx)

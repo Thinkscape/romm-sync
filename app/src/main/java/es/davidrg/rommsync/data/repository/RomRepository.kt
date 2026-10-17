@@ -13,7 +13,7 @@ import es.davidrg.rommsync.domain.model.ErrorKind
 import es.davidrg.rommsync.domain.model.Platform
 import es.davidrg.rommsync.domain.model.Rom
 import es.davidrg.rommsync.domain.model.RomFile
-import es.davidrg.rommsync.core.download.PathMapper
+import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -257,7 +257,8 @@ class RomRepository(
             val source = File(entity.localPath)
             if (!source.exists()) return@withContext MoveResult.SourceMissing
 
-            val targetDir = PathMapper.getPlatformDir(targetRoot, entity.platformSlug)
+            val targetDir = PlatformFolders.platformDir(targetRoot, entity.platformSlug)
+                ?: return@withContext MoveResult.Error(tr("download.unsupported_platform", entity.platformSlug))
             if (!targetDir.exists() && !targetDir.mkdirs()) {
                 return@withContext MoveResult.Error(tr("android.repository.move_create_dir_failed", targetDir))
             }
@@ -398,7 +399,7 @@ class RomRepository(
             for (platform in platforms) {
                 onProgress(platform.name)
                 // Si la carpeta de la plataforma no existe en ninguna raíz, saltamos su escaneo.
-                val hasPlatformDir = roots.any { PathMapper.getPlatformDir(it, platform.slug).isDirectory }
+                val hasPlatformDir = roots.any { PlatformFolders.platformDir(it, platform.slug)?.isDirectory == true }
                 if (!hasPlatformDir) continue
 
                 var offset = 0
@@ -455,7 +456,8 @@ class RomRepository(
     }
 
     private fun findRomFileOnDisk(romsRootPath: String, rom: Rom): File? {
-        val platformDir = PathMapper.getPlatformDir(romsRootPath, rom.platformSlug)
+        // Platforms without a launcher folder are never installed locally.
+        val platformDir = PlatformFolders.platformDir(romsRootPath, rom.platformSlug) ?: return null
         if (!platformDir.isDirectory) return null
         val entries = platformDir.listFiles() ?: return null
         if (entries.isEmpty()) return null
@@ -534,7 +536,7 @@ class RomRepository(
             platformSlug = platformSlug ?: "",
             coverUrlSmall = resolveCover(pathCoverSmall, urlCover, baseCoverUrl),
             coverUrlLarge = pathCoverLarge?.let { baseCoverUrl + it.removePrefix("/") },
-            files = files.map { RomFile(it.filename, it.size, it.hash) },
+            files = files.map { RomFile(it.fileName, it.fileSizeBytes, it.sha1Hash) },
             isMulti = multi || hasMultipleFiles,
             revision = revision,
             regions = regions,

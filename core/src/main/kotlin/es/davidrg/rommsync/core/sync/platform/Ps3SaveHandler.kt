@@ -173,10 +173,17 @@ class Ps3SaveHandler : SaveHandler {
 
     /**
      * `home/{user}/savedata` existente, o null si no hay árbol dev_hdd0.
+     *
+     * The base may also point straight at a `savedata` folder: EmuDeck exposes
+     * RPCS3 saves as `Emulation/saves/rpcs3/saves`, a symlink to
+     * `storage/rpcs3/dev_hdd0/home/00000001/savedata`.
      */
     private fun savedataRoot(basePath: String): File? {
-        val home = File(basePath, "home")
-        if (!home.isDirectory) return null
+        val base = File(basePath)
+        val home = File(base, "home")
+        if (!home.isDirectory) {
+            return base.takeIf { it.isDirectory && it.canonicalFile.name.equals("savedata", ignoreCase = true) }
+        }
         // Usuario preferido: el de id más bajo presente (00000001 primero).
         val user = home.listFiles()
             ?.filter { it.isDirectory && it.name.all(Char::isDigit) && it.name.length == 8 }

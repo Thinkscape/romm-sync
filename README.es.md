@@ -118,7 +118,9 @@ Monorepo con tres módulos Gradle que comparten todo el código de negocio:
 core/src/main/kotlin/es/davidrg/rommsync/core/   # JVM puro — compartido Android + Desktop
 ├── remote/              # Retrofit + OkHttp (API RomM, Device Sync Protocol)
 ├── sync/platform/       # Handlers de saves por emulador (RetroArch, melonDS, PS2, PS3, 3DS...)
-├── download/            # PathMapper (estructura de carpetas por plataforma)
+├── download/            # PlatformFolders (slug de RomM -> carpeta ES-DE/Cocoon)
+├── auth/                # DevicePairing (emparejamiento de dispositivo con RomM)
+├── install/             # InstallClient (instalación remota desde RomM)
 └── util/                # RootShell, lectura de cabeceras ROM...
 
 app/src/main/java/es/davidrg/rommsync/           # Android

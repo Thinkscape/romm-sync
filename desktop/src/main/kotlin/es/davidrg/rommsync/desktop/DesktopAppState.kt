@@ -561,9 +561,10 @@ class DesktopAppState(private val scope: CoroutineScope) {
                             // Solo borramos si la carpeta es exclusiva del juego
                             // (subcarpeta con su nombre), nunca la carpeta de la
                             // plataforma completa.
-                            val platformDir = es.davidrg.rommsync.core.download.PathMapper
-                                .getPlatformDir(config.romsRoot, rom.platformSlug ?: "unknown")
-                            if (f.canonicalPath == platformDir.canonicalPath) {
+                            // Any direct child of the roms root is a platform folder.
+                            val rootDir = File(config.romsRoot).canonicalFile
+                            val dirFile = f.canonicalFile
+                            if (dirFile == rootDir || dirFile.parentFile == rootDir) {
                                 sharedDir = true
                             } else {
                                 f.deleteRecursively()
@@ -633,7 +634,10 @@ class DesktopAppState(private val scope: CoroutineScope) {
                     val romsOfPlatform = withContext(Dispatchers.IO) { fetchAllRoms(svc, p.id) }
                     checked += romsOfPlatform.size
 
-                    val folder = library.platform(p.slug).romsFolderOverride ?: p.slug
+                    // Platforms without a launcher folder are not installable here.
+                    val folder = library.platform(p.slug).romsFolderOverride
+                        ?: es.davidrg.rommsync.core.download.PlatformFolders.folderFor(p.slug)
+                        ?: continue
                     val dir = File(config.romsRoot, folder)
                     val diskFiles = mutableSetOf<String>()
                     if (dir.isDirectory) {
@@ -643,7 +647,7 @@ class DesktopAppState(private val scope: CoroutineScope) {
                     }
 
                     for (rom in romsOfPlatform) {
-                        val names = if (rom.files.isNotEmpty()) rom.files.map { it.filename } else listOf(rom.fileName)
+                        val names = if (rom.files.isNotEmpty()) rom.files.map { it.fileName } else listOf(rom.fileName)
                         val matched = names.firstOrNull { it.lowercase() in diskFiles }
                         if (matched != null && library.rom(rom.id) == null) {
                             withContext(Dispatchers.IO) {

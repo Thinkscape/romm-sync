@@ -23,6 +23,9 @@ dependencies {
     // Coroutines
     api(libs.kotlinx.coroutines.core)
 
+    // RomM device socket (install:queued / install:cancelled)
+    implementation(libs.socketio.client)
+
     // Tests
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

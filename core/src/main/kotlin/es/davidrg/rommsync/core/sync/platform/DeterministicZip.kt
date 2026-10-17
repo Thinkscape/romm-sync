@@ -30,11 +30,19 @@ object DeterministicZip {
 }
 
 /**
+ * Every file and folder under [folder] in path order. Directory listing order
+ * differs between filesystems (ext4, exFAT, APFS), so the same save zipped on
+ * two devices would otherwise hash differently.
+ */
+private fun sortedTree(folder: File): List<File> =
+    folder.walkTopDown().sortedBy { folder.toPath().relativize(it.toPath()).toString() }.toList()
+
+/**
  * Zipea [folder] completa bajo el prefijo "{folder.name}/" con timestamps fijos.
  */
 internal fun zipFolderDeterministic(folder: File, output: File) {
     java.util.zip.ZipOutputStream(FileOutputStream(output)).use { zos ->
-        folder.walkTopDown().forEach { file ->
+        sortedTree(folder).forEach { file ->
             val relativePath = "${folder.name}/${folder.toPath().relativize(file.toPath())}"
             if (file.isFile) {
                 zos.putNextEntry(DeterministicZip.fixedEntry(relativePath))
@@ -54,7 +62,7 @@ internal fun zipFolderDeterministic(folder: File, output: File) {
 internal fun zipFoldersDeterministic(folders: List<File>, output: File) {
     java.util.zip.ZipOutputStream(FileOutputStream(output)).use { zos ->
         for (folder in folders) {
-            folder.walkTopDown().forEach { file ->
+            sortedTree(folder).forEach { file ->
                 val relativePath = "${folder.name}/${folder.toPath().relativize(file.toPath())}"
                 if (file.isFile) {
                     zos.putNextEntry(DeterministicZip.fixedEntry(relativePath))
@@ -75,7 +83,7 @@ internal fun zipFoldersDeterministic(folders: List<File>, output: File) {
  */
 internal fun zipFolderRelativeToDeterministic(root: File, folder: File, output: File) {
     java.util.zip.ZipOutputStream(FileOutputStream(output)).use { zos ->
-        folder.walkTopDown().forEach { file ->
+        sortedTree(folder).forEach { file ->
             val relativePath = root.toPath().relativize(file.toPath()).toString()
             if (relativePath.isEmpty()) return@forEach
             if (file.isFile) {

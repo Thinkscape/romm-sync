@@ -52,8 +52,7 @@ class RetroArchSaveHandler : SaveHandler {
         for (dir in saveDirs) {
             if (!dir.isDirectory) continue
             dir.listFiles()?.filter { file ->
-                file.isFile && file.nameWithoutExtension.equals(romBaseName, ignoreCase = true)
-                    && SAVE_EXTENSIONS.any { ext -> file.name.endsWith(ext, ignoreCase = true) }
+                file.isFile && isSaveName(file.name, romBaseName)
             }?.forEach { file ->
                 if (seenNames.add(file.name.lowercase())) {
                     results.add(file.toLocalSave(romId))
@@ -64,12 +63,10 @@ class RetroArchSaveHandler : SaveHandler {
         for (dir in stateDirs) {
             if (!dir.isDirectory) continue
             dir.listFiles()?.filter { file ->
-                file.isFile &&
-                    file.name.startsWith("$romBaseName.state", ignoreCase = true) &&
-                    STATE_PATTERN.matches(file.name)
+                file.isFile && isStateName(file.name, romBaseName)
             }?.forEach { file ->
                 if (seenNames.add(file.name.lowercase())) {
-                    results.add(file.toLocalSave(romId))
+                    results.add(file.toLocalSave(romId, SaveKind.STATE))
                 }
             }
         }
@@ -80,15 +77,11 @@ class RetroArchSaveHandler : SaveHandler {
         // también sus ficheros — sin esto findSaves devolvía vacío y el sync
         // parecía "al día" sin mirar nunca ahí.
         File(savesBasePath).listFiles()?.filter { file ->
-            file.isFile && (
-                (file.nameWithoutExtension.equals(romBaseName, ignoreCase = true) &&
-                    SAVE_EXTENSIONS.any { file.name.endsWith(it, ignoreCase = true) }) ||
-                    (file.name.startsWith("$romBaseName.state", ignoreCase = true) &&
-                        STATE_PATTERN.matches(file.name))
-                )
+            file.isFile && (isSaveName(file.name, romBaseName) || isStateName(file.name, romBaseName))
         }?.forEach { file ->
             if (seenNames.add(file.name.lowercase())) {
-                results.add(file.toLocalSave(romId))
+                val kind = if (isStateName(file.name, romBaseName)) SaveKind.STATE else SaveKind.SAVE
+                results.add(file.toLocalSave(romId, kind))
             }
         }
 
@@ -147,14 +140,8 @@ class RetroArchSaveHandler : SaveHandler {
                 ?: emptyList()
         }
 
-        val isSave = { name: String ->
-            name.substringBeforeLast('.').equals(romBaseName, ignoreCase = true) &&
-                SAVE_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) }
-        }
-        val isState = { name: String ->
-            name.startsWith("$romBaseName.state", ignoreCase = true) &&
-                STATE_PATTERN.matches(name)
-        }
+        val isSave = { name: String -> isSaveName(name, romBaseName) }
+        val isState = { name: String -> isStateName(name, romBaseName) }
 
         val parts = (
             scan(File(savesBasePath, "saves/$platformSlug"), isSave) +
@@ -172,24 +159,38 @@ class RetroArchSaveHandler : SaveHandler {
     companion object {
         private val SAVE_EXTENSIONS = listOf(".srm", ".sav", ".save", ".eep", ".fla")
 
+        /** DOSBox Pure stores each game's writes as `<content name>.pure.zip`. */
+        private const val DOSBOX_PURE_SUFFIX = ".pure.zip"
+
         /** .state, .state1... y .state.auto (auto-save de RetroArch). */
         private val STATE_PATTERN = Regex(
             ".*\\.state(\\d*|\\.auto)$",
             RegexOption.IGNORE_CASE,
         )
+
+        internal fun isSaveName(name: String, romBaseName: String): Boolean =
+            name.equals("$romBaseName$DOSBOX_PURE_SUFFIX", ignoreCase = true) || (
+                name.substringBeforeLast('.').equals(romBaseName, ignoreCase = true) &&
+                    SAVE_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) }
+                )
+
+        /** Thumbnails (`*.state.png`) never match: the pattern anchors on the state suffix. */
+        internal fun isStateName(name: String, romBaseName: String): Boolean =
+            name.startsWith("$romBaseName.state", ignoreCase = true) && STATE_PATTERN.matches(name)
     }
 }
 
 /**
  * Calcula SHA-1 de un fichero y construye un [LocalSave].
  */
-internal suspend fun File.toLocalSave(romId: Int): LocalSave = withContext(Dispatchers.IO) {
+internal suspend fun File.toLocalSave(romId: Int, kind: SaveKind = SaveKind.SAVE): LocalSave = withContext(Dispatchers.IO) {
     LocalSave(
         romId = romId,
         fileName = name,
         file = this@toLocalSave,
         lastModified = lastModified(),
         sha1 = sha1(),
+        kind = kind,
     )
 }
 

@@ -227,14 +227,16 @@ fun GameDetailPanel(card: GameCard, state: DesktopAppState) {
         // ── Archivos de la entrada (multi-disc = varios files en una ROM) ──
         if (rep.multi || rep.hasMultipleFiles || rep.files.size > 1) {
             Spacer(Modifier.height(20.dp))
-            val fileRows = rep.files.ifEmpty { listOf(es.davidrg.rommsync.core.remote.dto.RomFileDto(rep.fileName, rep.fileSizeBytes)) }
+            val fileRows = rep.files.ifEmpty {
+                listOf(es.davidrg.rommsync.core.remote.dto.RomFileDto(id = 0, fileName = rep.fileName, fileSizeBytes = rep.fileSizeBytes))
+            }
             Text(tr("game.files.title", fileRows.size), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             fileRows.forEach { file ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(file.filename, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(file.fileName, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        formatBytes(file.size),
+                        formatBytes(file.fileSizeBytes),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

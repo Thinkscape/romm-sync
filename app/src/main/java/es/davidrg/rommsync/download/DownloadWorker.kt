@@ -18,7 +18,7 @@ import es.davidrg.rommsync.data.local.entity.DownloadedRomEntity
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
-import es.davidrg.rommsync.core.download.PathMapper
+import es.davidrg.rommsync.core.download.PlatformFolders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -80,16 +80,23 @@ class DownloadWorker(
 
         if (apiKey.isEmpty()) return@withContext Result.failure()
 
-        // Ensure target platform directory exists
-        PathMapper.ensurePlatformDir(romsRootPath, platformSlug)
+        // Map the RomM slug to the launcher folder; platforms without a mapping
+        // are not installable here, so never write into <root>/<slug>.
+        val platformDir = PlatformFolders.platformDir(romsRootPath, platformSlug)
+            ?: return@withContext Result.failure(workDataOf(
+                KEY_ROM_NAME to romName,
+                KEY_FILE_NAME to fileName,
+                KEY_PLATFORM_SLUG to platformSlug,
+                KEY_ERROR_MESSAGE to tr("download.unsupported_platform", platformSlug),
+            ))
+        if (!platformDir.exists()) platformDir.mkdirs()
 
         // ── Space check: fail fast if the target volume can't hold the ROM ──
         // The API doesn't expose file size upfront for all endpoints, so we
         // estimate from the Content-Length of a HEAD-ish first response below.
         // Here we only guard the resume case: if a partial already occupies
         // more than the free space, abort before wasting bytes.
-        val targetFileForSpace = PathMapper.getRomFile(romsRootPath, platformSlug, fileName)
-        val spaceCheck = hasEnoughSpace(targetFileForSpace.parentFile, neededBytes = -1L)
+        val spaceCheck = hasEnoughSpace(platformDir, neededBytes = -1L)
         if (spaceCheck == SpaceCheck.NO_STORAGE) {
             return@withContext Result.failure(workDataOf(
                 KEY_ROM_NAME to romName,
@@ -120,7 +127,7 @@ class DownloadWorker(
         return@withContext try {
             currentSemaphore.withPermit {
                 performDownload(
-                    apiService, romsRootPath, fileName, romId, romName, platformSlug,
+                    apiService, platformDir, fileName, romId, romName, platformSlug,
                     expectedHash = inputData.getString(KEY_FILE_HASH),
                 )
             }
@@ -207,14 +214,14 @@ class DownloadWorker(
      */
     private suspend fun performDownload(
         apiService: RomMApiService,
-        romsRootPath: String,
+        platformDir: File,
         fileName: String,
         romId: Int,
         romName: String,
         platformSlug: String,
         expectedHash: String? = null,
     ): Result {
-        val targetFile = PathMapper.getRomFile(romsRootPath, platformSlug, fileName)
+        val targetFile = File(platformDir, fileName)
 
         // Offset de reanudación: tamaño del parcial si existe y es plausible
         val partialBytes = if (targetFile.exists()) targetFile.length() else 0L
@@ -268,7 +275,7 @@ class DownloadWorker(
                 contentLength <= 0L && response.code() == 200 -> {
                     // mod_zip: Content-Length = -1, stream comprimido al vuelo
                     reportProgress(0, true, romId, romName, fileName, platformSlug)
-                    extractZipStream(response.body()!!, romsRootPath, platformSlug)
+                    extractZipStream(response.body()!!, platformDir)
                     wasZipStream = true
                 }
                 else -> {
@@ -685,10 +692,8 @@ class DownloadWorker(
      */
     private suspend fun extractZipStream(
         body: ResponseBody,
-        romsRootPath: String,
-        platformSlug: String,
+        targetDir: File,
     ) {
-        val targetDir = PathMapper.getPlatformDir(romsRootPath, platformSlug)
         val createdFiles = mutableListOf<File>()
 
         try {

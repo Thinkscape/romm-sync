@@ -86,3 +86,19 @@ data class PlaySessionDto(
     @Json(name = "end_time") val endTime: String,
     @Json(name = "duration_ms") val durationMs: Long,
 )
+
+// ── Saves / states listing ─────────────────────────────────────────────
+// GET /api/saves?rom_id= and GET /api/states?rom_id= (subset of SaveSchema / StateSchema).
+// /api/sync/negotiate covers saves only; states are listed and transferred directly.
+
+@JsonClass(generateAdapter = true)
+data class ServerAssetDto(
+    @Json(name = "id") val id: Int,
+    @Json(name = "rom_id") val romId: Int,
+    @Json(name = "file_name") val fileName: String,
+    @Json(name = "file_size_bytes") val fileSizeBytes: Long = 0,
+    @Json(name = "emulator") val emulator: String? = null,
+    @Json(name = "slot") val slot: String? = null,
+    @Json(name = "content_hash") val contentHash: String? = null,
+    @Json(name = "updated_at") val updatedAt: String? = null,
+)

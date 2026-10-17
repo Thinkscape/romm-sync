@@ -3,6 +3,12 @@ package es.davidrg.rommsync.core.sync.platform
 import java.io.File
 
 /**
+ * Whether a local file is an in-game save (uploaded to `POST /api/saves`) or an
+ * emulator save state (uploaded to `POST /api/states`).
+ */
+enum class SaveKind { SAVE, STATE }
+
+/**
  * Representa un archivo de save localizado en disco.
  */
 data class LocalSave(
@@ -11,6 +17,7 @@ data class LocalSave(
     val file: File,
     val lastModified: Long,
     val sha1: String,
+    val kind: SaveKind = SaveKind.SAVE,
 )
 
 /**

@@ -300,7 +300,7 @@ class MetadataExportWorker(
             platformSlug = dto.platformSlug ?: "",
             coverUrlSmall = dto.pathCoverSmall?.let { base + it.removePrefix("/") },
             coverUrlLarge = dto.pathCoverLarge?.let { base + it.removePrefix("/") },
-            files = dto.files.map { es.davidrg.rommsync.domain.model.RomFile(it.filename, it.size) },
+            files = dto.files.map { es.davidrg.rommsync.domain.model.RomFile(it.fileName, it.fileSizeBytes) },
             isMulti = dto.multi || dto.hasMultipleFiles,
             revision = dto.revision,
             regions = dto.regions,

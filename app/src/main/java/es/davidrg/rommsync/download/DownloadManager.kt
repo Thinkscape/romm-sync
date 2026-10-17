@@ -45,7 +45,8 @@ class DownloadManager(private val context: Context) {
             .putInt(DownloadWorker.KEY_PLATFORM_ID, rom.platformId)
             .putString(DownloadWorker.KEY_PLATFORM_SLUG, rom.platformSlug)
             .putString(DownloadWorker.KEY_SERVER_URL, serverUrl)
-            .putString(DownloadWorker.KEY_FILE_HASH, rom.files.firstOrNull()?.hash)
+            // Only a single-file rom downloads as that exact file; multi-file roms arrive zipped.
+            .putString(DownloadWorker.KEY_FILE_HASH, rom.files.singleOrNull()?.hash)
             .putString(DownloadWorker.KEY_ROMS_ROOT_PATH, romsRootPath)
             .build()
 

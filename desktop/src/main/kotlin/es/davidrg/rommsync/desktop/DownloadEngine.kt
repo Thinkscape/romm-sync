@@ -1,6 +1,6 @@
 package es.davidrg.rommsync.desktop
 
-import es.davidrg.rommsync.core.download.PathMapper
+import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.RomDto
@@ -44,7 +44,11 @@ class DownloadEngine(
         val targetDir = if (!folderOverride.isNullOrBlank()) {
             File(romsRoot, folderOverride).also { it.mkdirs() }
         } else {
-            PathMapper.getPlatformDir(romsRoot.absolutePath, rom.platformSlug ?: "unknown").also { it.mkdirs() }
+            // Platforms without a launcher folder are not installable here.
+            val slug = rom.platformSlug.orEmpty()
+            val mapped = PlatformFolders.platformDir(romsRoot.absolutePath, slug)
+                ?: return@withContext Result(tr("download.unsupported_platform", slug), failed = true)
+            mapped.also { it.mkdirs() }
         }
 
         // Fichero objetivo y parcial previo (para reanudar) se calculan ANTES
@@ -114,7 +118,8 @@ class DownloadEngine(
      * null si está OK o no hay hash verificable.
      */
     private fun verifyHash(rom: RomDto, target: File): String? {
-        val expected = rom.files.firstOrNull()?.hash?.takeIf { it.isNotBlank() } ?: return null
+        // Only a single-file rom downloads as that exact file; multi-file roms arrive zipped.
+        val expected = rom.files.singleOrNull()?.sha1Hash?.takeIf { it.isNotBlank() } ?: return null
         val algo = when (expected.length) {
             32 -> "MD5"
             40 -> "SHA-1"

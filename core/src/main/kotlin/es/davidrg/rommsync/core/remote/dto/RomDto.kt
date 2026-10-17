@@ -17,15 +17,6 @@ data class IgdbMetadataDto(
 )
 
 @JsonClass(generateAdapter = true)
-data class RomFileDto(
-    @Json(name = "file_name") val filename: String,
-    @Json(name = "file_size_bytes") val size: Long = 0,
-    @Json(name = "file_path") val filePath: String? = null,
-    @Json(name = "full_path") val fullPath: String? = null,
-    @Json(name = "hash") val hash: String? = null,
-)
-
-@JsonClass(generateAdapter = true)
 data class RomDto(
     val id: Int,
     @Json(name = "slug") val slug: String? = null,
