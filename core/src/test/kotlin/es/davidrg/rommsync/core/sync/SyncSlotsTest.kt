@@ -7,6 +7,8 @@ import es.davidrg.rommsync.core.sync.platform.LocalSave
 import es.davidrg.rommsync.core.sync.platform.SaveKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertSame
 import org.junit.Test
 import java.io.File
@@ -101,5 +103,48 @@ class SyncSlotsTest {
         ).single()
         assertEquals(2, plan.remote?.id)
         assertEquals(StateAction.NOOP, plan.action)
+    }
+
+    @Test
+    fun `state uploaded then re-planned against the listing has no ops`() {
+        val name = "Legend of Zelda, The (Europe) (Rev A).state.auto"
+        val localState = local(name, "f41bef", SaveKind.STATE)
+        val store = mutableMapOf<String, String>()
+
+        val first = SyncSlots.planStates(listOf(localState), emptyList(), "retroarch", { null }, { null }).single()
+        assertEquals(StateAction.UPLOAD, first.action)
+
+        // POST /api/states response, recorded exactly as after a download.
+        val uploaded = remote(1, name, updatedAt = "2026-10-17T23:40:53.418226Z").copy(fileSizeBytes = 8893)
+        store["local"] = localState.sha1
+        store["remote"] = SyncSlots.remoteMarker(uploaded)
+
+        // GET /api/states renders the same row's time differently.
+        val listed = uploaded.copy(updatedAt = "2026-10-17T23:40:53+00:00")
+        val second = SyncSlots.planStates(listOf(localState), listOf(listed), "retroarch", { store["local"] }, { store["remote"] })
+        assertEquals(listOf(StateAction.NOOP), second.map { it.action })
+    }
+
+    @Test
+    fun `marker recorded before normalisation still matches`() {
+        val r = remote(1, "A.state", updatedAt = "2026-10-17T23:40:53+00:00")
+        assertTrue(SyncSlots.sameRemoteVersion("1:2026-10-17T23:40:53+00:00:10", r))
+        assertTrue(SyncSlots.sameRemoteVersion("1:2026-10-17T23:40:53.5Z:10", r))
+        assertFalse(SyncSlots.sameRemoteVersion("1:2026-10-17T23:41:00+00:00:10", r))
+        assertFalse(SyncSlots.sameRemoteVersion(null, r))
+    }
+
+    @Test
+    fun `unknown remote version with unchanged local of the same size is not downloaded`() {
+        val file = File.createTempFile("state", ".auto").apply { writeBytes(ByteArray(10)); deleteOnExit() }
+        val localState = LocalSave(1, "A.state.auto", file, 0L, "same", SaveKind.STATE)
+        val op = SyncSlots.planStates(
+            listOf(localState),
+            listOf(remote(7, "A.state.auto")), // fileSizeBytes = 10
+            "retroarch",
+            lastLocalHash = { "same" },
+            lastRemoteMarker = { "something-else" },
+        ).single()
+        assertEquals(StateAction.NOOP, op.action)
     }
 }

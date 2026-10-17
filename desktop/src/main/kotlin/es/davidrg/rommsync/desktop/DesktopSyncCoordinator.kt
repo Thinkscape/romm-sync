@@ -527,7 +527,7 @@ class DesktopSyncCoordinator(
                 val unseen = remote.any { r ->
                     val name = SyncSlots.localNameFor(r.fileName, r.slot)
                     (r.emulator == null || r.emulator == ctx.emulator) &&
-                        hashStore?.getStateRemoteMarker(romId, name) != SyncSlots.remoteMarker(r)
+                        !SyncSlots.sameRemoteVersion(hashStore?.getStateRemoteMarker(romId, name), r)
                 }
                 if (!unseen) continue
                 findSaves(ctx).also { localSaves[romId] = it }

@@ -473,7 +473,7 @@ class SyncCoordinator(
 
     private fun remoteChangedSinceSync(romId: Int, remote: ServerAssetDto): Boolean {
         val name = SyncSlots.localNameFor(remote.fileName, remote.slot)
-        return syncedHashStore?.getSyncedHash(romId, remoteMarkerKey(name)) != SyncSlots.remoteMarker(remote)
+        return !SyncSlots.sameRemoteVersion(syncedHashStore?.getSyncedHash(romId, remoteMarkerKey(name)), remote)
     }
 
     private suspend fun executeStateStep(

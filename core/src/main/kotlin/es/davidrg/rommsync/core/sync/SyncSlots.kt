@@ -113,9 +113,39 @@ object SyncSlots {
     /**
      * Version marker of a server state as stored after a sync. `StateSchema`
      * has no content hash in RomM 5.4, so id + update time + size stand in.
+     * The time is normalised to whole UTC seconds: the `POST /api/states`
+     * response and the later `GET /api/states` listing do not render
+     * `updated_at` identically (fraction digits, `Z` vs `+00:00`), and a raw
+     * comparison made a just-uploaded state look like a new server version.
      */
     fun remoteMarker(remote: ServerAssetDto): String =
-        remote.contentHash ?: "${remote.id}:${remote.updatedAt}:${remote.fileSizeBytes}"
+        remote.contentHash ?: "${remote.id}:${normalizeTimestamp(remote.updatedAt)}:${remote.fileSizeBytes}"
+
+    /** True when [stored] (a marker recorded earlier, possibly un-normalised) denotes [remote]'s version. */
+    fun sameRemoteVersion(stored: String?, remote: ServerAssetDto): Boolean {
+        if (stored == null) return false
+        val current = remoteMarker(remote)
+        if (stored == current) return true
+        // Markers written before normalisation: "<id>:<raw timestamp>:<size>".
+        val id = stored.substringBefore(':', "")
+        val size = stored.substringAfterLast(':', "")
+        val time = stored.removePrefix("$id:").removeSuffix(":$size")
+        return remote.contentHash == null && id == remote.id.toString() &&
+            size == remote.fileSizeBytes.toString() &&
+            normalizeTimestamp(time) == normalizeTimestamp(remote.updatedAt)
+    }
+
+    /** ISO-8601 → `yyyy-MM-ddTHH:mm:ss` in UTC (fraction dropped); unparsable values pass through. */
+    internal fun normalizeTimestamp(value: String?): String? {
+        if (value.isNullOrBlank()) return value
+        return runCatching {
+            java.time.OffsetDateTime.parse(value).withOffsetSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime()
+        }.recoverCatching {
+            // Naive timestamps are UTC on the server.
+            java.time.LocalDateTime.parse(value)
+        }.map { it.withNano(0).toString().let { s -> if (s.length == 16) "$s:00" else s } }
+            .getOrDefault(value)
+    }
 
     /**
      * Plans state sync for one rom.
@@ -130,7 +160,10 @@ object SyncSlots {
      * Rules: local-only → upload; remote-only → download; both present → compare
      * against the last sync: only local changed → upload, only remote changed →
      * download, both changed (including first contact) → conflict, unless the
-     * server reports the same content hash.
+     * server reports the same content hash. A remote version this device has not
+     * recorded but whose size equals the unchanged local file is taken as the
+     * same content (no download, the caller records it as synced): it is what an
+     * upload whose response could not be matched to the listing looks like.
      */
     fun planStates(
         localStates: List<LocalSave>,
@@ -155,7 +188,8 @@ object SyncSlots {
                     StateAction.NOOP
                 else -> {
                     val localChanged = lastLocalHash(name) != local.sha1
-                    val remoteChanged = lastRemoteMarker(name) != remoteMarker(remote)
+                    val remoteChanged = !sameRemoteVersion(lastRemoteMarker(name), remote) &&
+                        !(!localChanged && remote.fileSizeBytes == local.file.length())
                     when {
                         localChanged && remoteChanged -> StateAction.CONFLICT
                         localChanged -> StateAction.UPLOAD
