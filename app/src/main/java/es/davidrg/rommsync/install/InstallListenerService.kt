@@ -55,6 +55,7 @@ class InstallListenerService : Service() {
     private var client: InstallClient? = null
     private var clientDevice: PairedDeviceSettings? = null
     private var screenOnSyncJob: Job? = null
+    private var postInstallSyncJob: Job? = null
     private var screenReceiverRegistered = false
 
     /** Last progress percentage shown per request; avoids flooding the notification manager. */
@@ -191,6 +192,9 @@ class InstallListenerService : Service() {
                     .setAutoCancel(true)
                     .build(),
             )
+            if (status == InstallClient.STATUS_DONE || status == InstallClient.STATUS_ALREADY_INSTALLED) {
+                schedulePostInstallSync()
+            }
             if (status == InstallClient.STATUS_DONE && files.isNotEmpty()) {
                 // Launchers such as Cocoon have no rescan intent; this at least updates MediaStore.
                 MediaScannerConnection.scanFile(
@@ -219,6 +223,30 @@ class InstallListenerService : Service() {
     }
 
     // ── Screen-on sync trigger ──────────────────────────────────────────
+
+    /**
+     * Sync after installs so saves/states already in RomM arrive with the game.
+     * Trailing debounce: each finished install restarts the settle timer (a batch
+     * → one sync after the last), and a trigger that the 60 s debounce would
+     * drop (a sync ran just before the install finished) is deferred, not lost.
+     */
+    @Synchronized
+    private fun schedulePostInstallSync() {
+        postInstallSyncJob?.cancel()
+        postInstallSyncJob = scope.launch {
+            delay(POST_INSTALL_SETTLE_MS)
+            while (true) {
+                val wait = SyncTriggers.millisUntilAllowed()
+                if (wait > 0) {
+                    delay(wait)
+                    continue
+                }
+                if (SyncTriggers.requestFullSync(applicationContext, "install")) break
+                // false: either not configured / disabled (give up) or lost a debounce race (retry).
+                if (SyncTriggers.millisUntilAllowed() == 0L) break
+            }
+        }
+    }
 
     private fun scheduleScreenOnSync() {
         if (!isCharging() && !isOnUnmeteredNetwork()) return
@@ -290,6 +318,8 @@ class InstallListenerService : Service() {
         private const val NOTIFICATION_ID_SERVICE = 4201
         private const val NOTIFICATION_TAG_INSTALL = "romm_install"
         private const val SCREEN_ON_SYNC_DELAY_MS = 2 * 60_000L
+        /** Quiet period after the last finished install before syncing (collapses push batches). */
+        private const val POST_INSTALL_SETTLE_MS = 10_000L
 
         private fun hostOf(baseUrl: String): String =
             runCatching { URI(baseUrl).host }.getOrNull() ?: baseUrl

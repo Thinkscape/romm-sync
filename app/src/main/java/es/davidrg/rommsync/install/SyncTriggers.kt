@@ -19,6 +19,10 @@ object SyncTriggers {
 
     private val lastAccepted = AtomicLong(0L)
 
+    /** Milliseconds until a trigger would no longer be debounced (0 = would run now). */
+    fun millisUntilAllowed(): Long =
+        (lastAccepted.get() + DEBOUNCE_MS - System.currentTimeMillis()).coerceAtLeast(0L)
+
     /** Returns true when a sync was enqueued, false when debounced. */
     fun requestFullSync(context: Context, source: String): Boolean {
         val settings = (context.applicationContext as? RomMSyncApplication)?.container?.settingsDataStore
