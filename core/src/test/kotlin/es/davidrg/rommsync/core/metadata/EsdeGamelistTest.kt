@@ -88,9 +88,28 @@ class EsdeGamelistTest {
     }
 
     @Test
-    fun `self-closing root is expanded`() {
-        val merged = EsdeGamelist.upsert("<?xml version=\"1.0\"?>\n<gameList />\n", listOf(EsdeGameEntry("./a.nes", emptyMap())))
-        assertTrue(merged.contains("<gameList>\n\t<game>\n\t\t<path>./a.nes</path>\n\t</game>\n</gameList>"))
+    fun `self-closing root is expanded in every whitespace form`() {
+        for (root in listOf("<gameList />", "<gameList/>", "<gameList\n\t/>")) {
+            val merged = EsdeGamelist.upsert("<?xml version=\"1.0\"?>\n$root\n", listOf(EsdeGameEntry("./a.nes", linkedMapOf("name" to "A"))))
+            assertEquals(
+                "<?xml version=\"1.0\"?>\n<gameList>\n\t<game>\n\t\t<path>./a.nes</path>\n\t\t<name>A</name>\n\t</game>\n</gameList>\n",
+                merged,
+            )
+        }
+    }
+
+    @Test
+    fun `ES-DE empty gamelist keeps its alternativeEmulator block byte for byte`() {
+        // Shape ES-DE writes on the Deck (gamelists/n3ds/gamelist.xml), no trailing newline.
+        val head = "<?xml version=\"1.0\"?>\n<alternativeEmulator>\n\t<label>Azahar (Standalone)</label>\n</alternativeEmulator>\n"
+        val file = File(tmp.root, "ES-DE/gamelists/n3ds/gamelist.xml").apply { parentFile.mkdirs(); writeText("$head<gameList />") }
+
+        EsdeGamelist.upsertFile(file, listOf(EsdeGameEntry("./Game.3ds", linkedMapOf("name" to "Game"))))
+
+        assertEquals(
+            head + "<gameList>\n\t<game>\n\t\t<path>./Game.3ds</path>\n\t\t<name>Game</name>\n\t</game>\n</gameList>",
+            file.readText(),
+        )
     }
 
     @Test(expected = IllegalStateException::class)
