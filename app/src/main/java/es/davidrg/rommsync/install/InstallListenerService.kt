@@ -26,6 +26,7 @@ import es.davidrg.rommsync.RomMSyncApplication
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.install.InstallClient
 import es.davidrg.rommsync.core.install.InstallListener
+import es.davidrg.rommsync.core.metadata.EsdeTarget
 import es.davidrg.rommsync.data.repository.PairedDeviceSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -142,6 +143,15 @@ class InstallListenerService : Service() {
             store = container.installedRomStore,
             listener = Listener(hostOf(paired.baseUrl)),
             logger = { Log.i(TAG, it) },
+            // Cocoon's ES-DE integration reads this folder's gamelists/ and downloaded_media/.
+            esdeTarget = {
+                if (store.getEsdePushMediaEnabledBlocking()) {
+                    val dir = File(store.getEsdeMetadataDirBlocking())
+                    EsdeTarget(dir, File(dir, "downloaded_media"))
+                } else {
+                    null
+                }
+            },
         )
         client = newClient
         clientDevice = paired
@@ -203,6 +213,14 @@ class InstallListenerService : Service() {
                     null,
                     null,
                 )
+            }
+        }
+
+        override fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {
+            if (failures.isEmpty()) {
+                Log.i(TAG, "install $requestId: ES-DE media ready for rom $romId ($mediaFiles files)")
+            } else {
+                Log.w(TAG, "install $requestId: ES-DE export for rom $romId: $mediaFiles files, problems: ${failures.joinToString("; ")}")
             }
         }
 

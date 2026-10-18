@@ -139,6 +139,7 @@ fun ConfigScreen() {
     var showSecondaryRomsPicker by remember { mutableStateOf(false) }
     var showEsdePicker by remember { mutableStateOf(false) }
     var showRetroHraiPicker by remember { mutableStateOf(false) }
+    var showEsdeMetadataPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(settings.serverUrl, manualApiKey) {
         if (serverUrl.isEmpty() && settings.serverUrl.isNotEmpty()) serverUrl = settings.serverUrl
@@ -157,6 +158,9 @@ fun ConfigScreen() {
     val esdeDataDir by container.settingsRepository.esdeDataDir.collectAsState(
         initial = es.davidrg.rommsync.data.local.SettingsDataStore.DEFAULT_ESDE_DATA_DIR,
     )
+    // ES-DE / Cocoon metadata folder (push installs + platform export)
+    val esdeMetadataDir by container.settingsRepository.esdeMetadataDir.collectAsState(initial = "")
+    val esdePushMedia by container.settingsRepository.esdePushMediaEnabled.collectAsState(initial = true)
 
     // Cargar ruta de media de RetroHRAI
     val retroHraiMediaPath by container.settingsRepository.retroHraiMediaPath.collectAsState(
@@ -509,6 +513,57 @@ fun ConfigScreen() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 }
+                Spacer(modifier = Modifier.height(16.dp))
+                var pushMediaLocal by remember { mutableStateOf<Boolean?>(null) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(tr("android.config.esde_media_on_push"), style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            tr("android.config.esde_media_on_push_hint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = pushMediaLocal ?: esdePushMedia,
+                        onCheckedChange = { enabled ->
+                            pushMediaLocal = enabled
+                            viewModel.setEsdePushMediaEnabled(enabled)
+                        },
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                CommittedPathField(
+                    value = esdeMetadataDir,
+                    label = tr("android.config.esde_metadata_dir_label"),
+                    placeholder = "/storage/XXXX-XXXX/ES-DE",
+                    requireDirectory = false,
+                    onCommit = { viewModel.setEsdeMetadataDir(it) },
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = { showEsdeMetadataPicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        Icons.Filled.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text(tr("common.select_folder"))
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    tr("android.config.esde_metadata_dir_hint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             // ── RetroHRAI Media ──────────────────────────────────────────
@@ -965,6 +1020,18 @@ fun ConfigScreen() {
             onSelect = { path ->
                 viewModel.setEsdeDataPath(path)
                 showEsdePicker = false
+            },
+        )
+    }
+    if (showEsdeMetadataPicker) {
+        FolderPickerDialog(
+            initialPath = esdeMetadataDir.ifBlank {
+                es.davidrg.rommsync.data.local.SettingsDataStore.DEFAULT_ESDE_DATA_DIR
+            },
+            onDismiss = { showEsdeMetadataPicker = false },
+            onSelect = { path ->
+                viewModel.setEsdeMetadataDir(path)
+                showEsdeMetadataPicker = false
             },
         )
     }

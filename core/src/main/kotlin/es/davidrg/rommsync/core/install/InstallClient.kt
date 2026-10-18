@@ -2,6 +2,8 @@ package es.davidrg.rommsync.core.install
 
 import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.download.RomFileVerification
+import es.davidrg.rommsync.core.metadata.EsdeMediaExporter
+import es.davidrg.rommsync.core.metadata.EsdeTarget
 import es.davidrg.rommsync.core.remote.AuthInterceptor
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
@@ -54,6 +56,13 @@ interface InstallListener {
     fun onInstallStarted(requestId: String, romId: Int) {}
     fun onInstallProgress(requestId: String, bytes: Long, total: Long) {}
     fun onInstallFinished(requestId: String, romId: Int, status: String, reason: String?, files: List<File>) {}
+
+    /**
+     * ES-DE media/gamelist export after a successful install (runs after the
+     * report, never changes the install outcome). [failures] lists per-item
+     * problems; [mediaFiles] counts media written or already present.
+     */
+    fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {}
 }
 
 /**
@@ -71,6 +80,10 @@ interface InstallListener {
  * `<fs_name>/` game folder, `<fs_name>.m3u/` when the set has an `.m3u`).
  * Nothing is ever deleted except this client's own `.part` files.
  *
+ * After a successful install (`done`/`already_installed`, once reported), when
+ * [esdeTarget] yields a folder, RomM's scraped media and metadata are exported
+ * there in ES-DE's layout ([EsdeMediaExporter]) so the launcher needs no scrape.
+ *
  * Request ids are strings (RomM `InstallRequestSchema.id: str`).
  */
 class InstallClient(
@@ -83,6 +96,8 @@ class InstallClient(
     private val listener: InstallListener,
     httpClient: OkHttpClient? = null,
     private val logger: (String) -> Unit = { println("[romm-sync] $it") },
+    /** ES-DE folders to export media/gamelists into after an install; null = off. Read per install. */
+    private val esdeTarget: () -> EsdeTarget? = { null },
 ) {
     private val baseClient: OkHttpClient = httpClient ?: OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -93,6 +108,8 @@ class InstallClient(
     private val api: RomMApiService = NetworkModule
         .createRetrofit(baseUrl, baseClient.newBuilder().addInterceptor(AuthInterceptor { token }).build())
         .create(RomMApiService::class.java)
+
+    private val mediaExporter = EsdeMediaExporter(baseClient, baseUrl, token, logger)
 
     private class Running(val requestId: String, val job: Job)
 
@@ -280,9 +297,8 @@ class InstallClient(
         listener.onInstallStarted(request.id, request.romId)
         log("install ${request.id}: rom ${request.romId}")
         val parts = mutableListOf<File>()
-        try {
-            val outcome = performInstall(request, root, parts)
-            finish(request, outcome.status, outcome.reason, outcome.files)
+        val outcome = try {
+            performInstall(request, root, parts).also { finish(request, it.status, it.reason, it.files) }
         } catch (e: CancellationException) {
             deleteParts(parts)
             log("install ${request.id}: aborted")
@@ -295,10 +311,44 @@ class InstallClient(
                 throw CancellationException("install request cancelled").apply { initCause(e) }
             }
             finish(request, STATUS_FAILED, describe(e), emptyList())
+            return
+        }
+        // Reported first so RomM shows the result promptly; media follows.
+        exportMetadata(request, outcome)
+    }
+
+    private suspend fun exportMetadata(request: InstallRequestDto, outcome: Outcome) {
+        val rom = outcome.rom ?: return
+        val primary = outcome.primary ?: return
+        val folder = outcome.folder ?: return
+        if (outcome.status != STATUS_DONE && outcome.status != STATUS_ALREADY_INSTALLED) return
+        val target = try {
+            esdeTarget()
+        } catch (e: Exception) {
+            log("media: cannot resolve ES-DE folder: ${describe(e)}")
+            null
+        } ?: return
+        try {
+            val result = mediaExporter.exportFor(rom, primary, folder, target.esdeDir, target.mediaDir)
+            log("media: ${result.files.size} files for rom ${rom.id} (${result.written.size} downloaded, ${result.failures.size} failed)")
+            listener.onMetadataExported(request.id, rom.id, result.files.size, result.failures)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val reason = describe(e)
+            log("media: export failed for rom ${rom.id}: $reason")
+            listener.onMetadataExported(request.id, rom.id, 0, listOf(reason))
         }
     }
 
-    private class Outcome(val status: String, val reason: String?, val files: List<File>)
+    private class Outcome(
+        val status: String,
+        val reason: String?,
+        val files: List<File>,
+        val rom: RomDetailDto? = null,
+        val primary: File? = null,
+        val folder: String? = null,
+    )
 
     private suspend fun performInstall(
         request: InstallRequestDto,
@@ -314,7 +364,7 @@ class InstallClient(
         val intact = withContext(Dispatchers.IO) { plan.targets.map { isIntact(it) } }
         if (intact.all { it }) {
             record(rom, plan, installedFiles)
-            return Outcome(STATUS_ALREADY_INSTALLED, null, installedFiles)
+            return Outcome(STATUS_ALREADY_INSTALLED, null, installedFiles, rom, plan.primary, folder)
         }
 
         val total = plan.targets.sumOf { it.file.fileSizeBytes }
@@ -341,7 +391,7 @@ class InstallClient(
         parts.clear()
         listener.onInstallProgress(request.id, total, total)
         record(rom, plan, installedFiles)
-        return Outcome(STATUS_DONE, null, installedFiles)
+        return Outcome(STATUS_DONE, null, installedFiles, rom, plan.primary, folder)
     }
 
     private fun record(rom: RomDetailDto, plan: InstallPlan, files: List<File>) {

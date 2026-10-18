@@ -43,6 +43,8 @@ class SettingsRepository(private val dataStore: SettingsDataStore) {
     val lastSyncConflictsJson: Flow<String> = dataStore.lastSyncConflictsJson
     val lastSyncFailedJson: Flow<String> = dataStore.lastSyncFailedJson
     val esdeDataDir: Flow<String> = dataStore.esdeDataDir
+    val esdeMetadataDir: Flow<String> = dataStore.esdeMetadataDir
+    val esdePushMediaEnabled: Flow<Boolean> = dataStore.esdePushMediaEnabled
     val retroHraiMediaPath: Flow<String> = dataStore.retroHraiMediaPath
     val esdeExportEnabled: Flow<Boolean> = dataStore.esdeExportEnabled
     val retroHraiExportEnabled: Flow<Boolean> = dataStore.retroHraiExportEnabled
@@ -56,6 +58,8 @@ class SettingsRepository(private val dataStore: SettingsDataStore) {
     suspend fun setSaveSyncIntervalMinutes(minutes: Int) =
         dataStore.setSaveSyncIntervalMinutes(minutes)
     suspend fun setEsdeDataDir(path: String) = dataStore.setEsdeDataDir(path)
+    suspend fun setEsdeMetadataDir(path: String) = dataStore.setEsdeMetadataDir(path)
+    suspend fun setEsdePushMediaEnabled(enabled: Boolean) = dataStore.setEsdePushMediaEnabled(enabled)
     suspend fun setRetroHraiMediaPath(path: String) = dataStore.setRetroHraiMediaPath(path)
     suspend fun setEsdeExportEnabled(enabled: Boolean) = dataStore.setEsdeExportEnabled(enabled)
     suspend fun setRetroHraiExportEnabled(enabled: Boolean) =

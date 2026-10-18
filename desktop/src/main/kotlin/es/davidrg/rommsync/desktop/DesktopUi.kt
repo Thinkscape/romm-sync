@@ -1516,6 +1516,23 @@ fun SettingsScreen(state: DesktopAppState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(12.dp))
+            var mediaOnInstall by remember { mutableStateOf(state.config.esdeMediaOnInstall) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(tr("settings.esde.media_on_install"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        tr("settings.esde.media_on_install_hint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = mediaOnInstall, onCheckedChange = {
+                    mediaOnInstall = it
+                    state.config.esdeMediaOnInstall = it
+                    state.config.flush()
+                })
+            }
         }
 
         // ── Saves y conflictos ──

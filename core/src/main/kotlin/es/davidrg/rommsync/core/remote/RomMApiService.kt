@@ -1,6 +1,7 @@
 package es.davidrg.rommsync.core.remote
 
 import es.davidrg.rommsync.core.remote.dto.PlatformDto
+import es.davidrg.rommsync.core.remote.dto.RomDetailPage
 import es.davidrg.rommsync.core.remote.dto.RomResponse
 import es.davidrg.rommsync.core.remote.dto.DeviceRegistrationRequest
 import es.davidrg.rommsync.core.remote.dto.DeviceRegistrationResponse
@@ -54,6 +55,12 @@ interface RomMApiService {
     suspend fun getRoms(
         @QueryMap params: Map<String, String>,
     ): RomResponse
+
+    /** Same listing as [getRoms], items parsed with the media/metadata fields of [RomDetailDto]. */
+    @GET("api/roms")
+    suspend fun getRomDetailsPage(
+        @QueryMap params: Map<String, String>,
+    ): RomDetailPage
 
     /**
      * Download ROM content — returns a streaming response body.

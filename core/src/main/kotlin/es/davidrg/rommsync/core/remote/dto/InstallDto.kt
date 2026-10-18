@@ -27,7 +27,13 @@ data class InstallReportRequest(
     @Json(name = "reason") val reason: String? = null,
 )
 
-/** GET /api/roms/{id} subset needed to place a rom's files on disk. */
+/**
+ * GET /api/roms/{id} subset: what places a rom's files on disk plus the scraped
+ * media and metadata exported to ES-DE (also parsed from `GET /api/roms` list
+ * items, where `files` is empty). Provider metadata stays as loose maps: their
+ * shapes vary per provider and RomM version, and a type mismatch there must
+ * never fail an install.
+ */
 @JsonClass(generateAdapter = true)
 data class RomDetailDto(
     @Json(name = "id") val id: Int,
@@ -38,6 +44,33 @@ data class RomDetailDto(
     @Json(name = "fs_path") val fsPath: String? = null,
     @Json(name = "platform_id") val platformId: Int = 0,
     @Json(name = "name") val name: String? = null,
+    @Json(name = "has_multiple_files") val hasMultipleFiles: Boolean? = null,
+    @Json(name = "has_nested_single_file") val hasNestedSingleFile: Boolean? = null,
+    // ── Scraped text and media (ES-DE export) ──────────────────────────
+    @Json(name = "summary") val summary: String? = null,
+    /** Server-relative (`/assets/romm/resources/…`). */
+    @Json(name = "path_cover_large") val pathCoverLarge: String? = null,
+    /** Provider URL of the cover (absolute). */
+    @Json(name = "url_cover") val urlCover: String? = null,
+    /** Server-relative screenshot paths. */
+    @Json(name = "merged_screenshots") val mergedScreenshots: List<String>? = null,
+    /** Resource-relative (`roms/<platform>/<rom>/manual/<id>.pdf`). */
+    @Json(name = "path_manual") val pathManual: String? = null,
+    @Json(name = "url_manual") val urlManual: String? = null,
+    @Json(name = "path_video") val pathVideo: String? = null,
+    /** RomM's merged view across providers (`first_release_date` in ms). */
+    @Json(name = "metadatum") val metadatum: Map<String, Any?>? = null,
+    @Json(name = "igdb_metadata") val igdbMetadata: Map<String, Any?>? = null,
+    @Json(name = "ss_metadata") val ssMetadata: Map<String, Any?>? = null,
+    @Json(name = "launchbox_metadata") val launchboxMetadata: Map<String, Any?>? = null,
+    @Json(name = "gamelist_metadata") val gamelistMetadata: Map<String, Any?>? = null,
+)
+
+/** `GET /api/roms` page with items as [RomDetailDto] (list items carry no `files`). */
+@JsonClass(generateAdapter = true)
+data class RomDetailPage(
+    @Json(name = "items") val items: List<RomDetailDto> = emptyList(),
+    @Json(name = "total") val total: Int = 0,
 )
 
 /**

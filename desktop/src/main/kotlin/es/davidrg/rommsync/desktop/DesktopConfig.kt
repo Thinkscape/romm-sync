@@ -1,5 +1,6 @@
 package es.davidrg.rommsync.desktop
 
+import es.davidrg.rommsync.core.metadata.EsdeTarget
 import es.davidrg.rommsync.core.sync.platform.SavePaths
 import es.davidrg.rommsync.core.sync.platform.SaveProfile
 import java.io.File
@@ -119,6 +120,28 @@ object DesktopConfig {
         get() = prefs.get("esde_data_dir", File(System.getProperty("user.home", "."), "ES-DE").absolutePath)
         set(v) = prefs.put("esde_data_dir", v)
 
+    /** Export RomM media + gamelist entries into ES-DE after each push install (daemon). */
+    var esdeMediaOnInstall: Boolean
+        get() = prefs.getBoolean(KEY_ESDE_MEDIA_ON_INSTALL, true)
+        set(v) = prefs.putBoolean(KEY_ESDE_MEDIA_ON_INSTALL, v)
+
+    /**
+     * ES-DE target for media exports: [esdeDataDir], media into `MediaDirectory`
+     * from its `settings/es_settings.xml` (default `<ES-DE dir>/downloaded_media`
+     * when unset). Null when [requireExisting] and the ES-DE folder is absent.
+     */
+    fun esdeTarget(requireExisting: Boolean = true): EsdeTarget? {
+        val esdeDir = File(esdeDataDir)
+        if (requireExisting && !esdeDir.isDirectory) return null
+        val home = System.getProperty("user.home", ".")
+        val media = esdeMediaDirectory(File(esdeDir, "settings/es_settings.xml"), home)
+            ?: File(esdeDir, "downloaded_media").absolutePath
+        return EsdeTarget(esdeDir, File(media))
+    }
+
+    /** [esdeTarget] when export on install is enabled (the daemon's push installs). */
+    fun esdeInstallTarget(): EsdeTarget? = if (esdeMediaOnInstall) esdeTarget() else null
+
     /** Minutos entre sincronizaciones automáticas de saves (0 = desactivado). */
     var autoSyncMinutes: Int
         get() = prefs.getInt("auto_sync_minutes", 0)
@@ -162,17 +185,23 @@ object DesktopConfig {
     private const val KEY_PAIRED_DEVICE_ID = "paired.device_id"
     private const val KEY_PAIRED_NAME = "paired.device_name"
     private const val KEY_PAIRED_URL = "paired.base_url"
+    private const val KEY_ESDE_MEDIA_ON_INSTALL = "esde.media_on_install"
 
-    private val ROM_DIRECTORY = Regex("""<string\s+name="ROMDirectory"\s+value="([^"]*)"\s*/>""")
+    private fun esdeSettingRegex(name: String) = Regex("""<string\s+name="$name"\s+value="([^"]*)"\s*/>""")
 
     /**
      * `ROMDirectory` from ES-DE's `es_settings.xml` (not well-formed XML: no root
      * element, so it is matched line-wise). `~` and `%HOMEPATH%` expand to [home];
      * `%ROMPATH%` to ES-DE's default `~/ROMs`. Null when unset or unreadable.
      */
-    internal fun esdeRomDirectory(settings: File, home: String): String? {
+    internal fun esdeRomDirectory(settings: File, home: String): String? = esdePathSetting(settings, "ROMDirectory", home)
+
+    /** `MediaDirectory` from ES-DE's `es_settings.xml`, expanded like [esdeRomDirectory]; null when unset. */
+    internal fun esdeMediaDirectory(settings: File, home: String): String? = esdePathSetting(settings, "MediaDirectory", home)
+
+    private fun esdePathSetting(settings: File, name: String, home: String): String? {
         val text = runCatching { settings.readText() }.getOrNull() ?: return null
-        val raw = ROM_DIRECTORY.find(text)?.groupValues?.get(1)?.trim().orEmpty()
+        val raw = esdeSettingRegex(name).find(text)?.groupValues?.get(1)?.trim().orEmpty()
         if (raw.isEmpty()) return null
         val expanded = raw
             .replace("%ROMPATH%", File(home, "ROMs").path)

@@ -335,6 +335,15 @@ class ConfigViewModel(
         viewModelScope.launch { settingsRepository.setEsdeDataDir(path) }
     }
 
+    /** ES-DE / Cocoon metadata folder; blank reverts to the derived default. */
+    fun setEsdeMetadataDir(path: String) {
+        viewModelScope.launch { settingsRepository.setEsdeMetadataDir(path) }
+    }
+
+    fun setEsdePushMediaEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setEsdePushMediaEnabled(enabled) }
+    }
+
     fun setRetroHraiMediaPath(path: String) {
         viewModelScope.launch { settingsRepository.setRetroHraiMediaPath(path) }
     }

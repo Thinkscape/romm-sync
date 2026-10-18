@@ -936,13 +936,20 @@ class DesktopAppState(private val scope: CoroutineScope) {
 
     fun exportEsde() {
         if (_esdeRunning.value) return
+        val svc = api ?: run { showSnackbar(tr("connection.required")); return }
         _esdeRunning.value = true
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    DesktopEsdeExporter(config.esdeDataDir, config.romsRoot, library).export()
+                    val target = config.esdeTarget(requireExisting = false)!!
+                    val exporter = es.davidrg.rommsync.core.metadata.EsdeMediaExporter(
+                        okhttp3.OkHttpClient(), config.effectiveServerUrl, config.authToken,
+                    )
+                    DesktopEsdeExporter(target, config.romsRoot, library, svc, exporter).export()
                 }
                 _esdeStatus.value = result
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _esdeStatus.value = tr("app.esde.export_error", e.message)
             } finally {

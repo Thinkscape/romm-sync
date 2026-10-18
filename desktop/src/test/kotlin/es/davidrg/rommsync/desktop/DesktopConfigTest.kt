@@ -47,4 +47,18 @@ class DesktopConfigTest {
         assertNull(DesktopConfig.esdeRomDirectory(settings(""), "/home/deck"))
         assertNull(DesktopConfig.esdeRomDirectory(File(tmp.root, "absent.xml"), "/home/deck"))
     }
+
+    @Test
+    fun `MediaDirectory is read from the same settings file`() {
+        assertEquals(
+            "/run/media/deck/arcade/Emulation/tools/downloaded_media",
+            DesktopConfig.esdeMediaDirectory(settings(null), "/home/deck"),
+        )
+    }
+
+    @Test
+    fun `empty MediaDirectory gives null`() {
+        val file = tmp.newFile("empty_media.xml").apply { writeText("<string name=\"MediaDirectory\" value=\"\" />\n") }
+        assertNull(DesktopConfig.esdeMediaDirectory(file, "/home/deck"))
+    }
 }

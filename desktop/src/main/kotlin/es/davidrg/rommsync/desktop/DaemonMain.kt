@@ -65,10 +65,20 @@ object DaemonMain {
                 }
             },
             logger = ::log,
+            // Re-read per install: the GUI may have changed the ES-DE folder or the toggle.
+            esdeTarget = {
+                config.sync()
+                config.esdeInstallTarget()
+            },
         )
 
         log("romm-sync ${DesktopConfig.appVersion} daemon: device ${config.pairedDeviceName} (${config.pairedDeviceId}) at ${config.pairedBaseUrl}, roms ${config.romsRoot}")
         config.saveProfile()?.let { log("save profile ${it.name}") }
+        when {
+            !config.esdeMediaOnInstall -> log("media: ES-DE export on install disabled (esde.media_on_install=false)")
+            else -> config.esdeTarget()?.let { log("media: ES-DE gamelists in ${it.esdeDir}, media in ${it.mediaDir}") }
+                ?: log("media: no ES-DE folder at ${config.esdeDataDir}; export on install off")
+        }
 
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         Runtime.getRuntime().addShutdownHook(

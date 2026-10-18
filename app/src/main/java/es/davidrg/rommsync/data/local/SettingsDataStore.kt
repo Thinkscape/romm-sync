@@ -58,6 +58,10 @@ class SettingsDataStore(private val context: Context) {
         val SKIPPED_VERSION = stringPreferencesKey("skipped_version")
         val CONFLICT_POLICY = stringPreferencesKey("conflict_policy")
         val ESDE_DATA_DIR = stringPreferencesKey("esde_data_dir")
+        /** ES-DE / Cocoon metadata folder (gamelists + downloaded_media); unset = derived default. */
+        val ESDE_METADATA_DIR = stringPreferencesKey("esde_metadata_dir")
+        /** Export RomM media + gamelist entry after each push install (absent = on). */
+        val ESDE_PUSH_MEDIA_ENABLED = booleanPreferencesKey("esde_push_media_enabled")
         val RETROHRAI_MEDIA_PATH = stringPreferencesKey("retrohrai_media_path")
 
         // Toggles de funciones opcionales (opt-out: ausencia = activado)
@@ -89,6 +93,19 @@ class SettingsDataStore(private val context: Context) {
         const val DEFAULT_RETROARCH_PATH = "/storage/emulated/0/RetroArch"
         const val DEFAULT_ESDE_DATA_DIR = "/storage/emulated/0/ES-DE"
         const val DEFAULT_RETROHRAI_MEDIA_PATH = "/storage/emulated/0/RetroHrai/media"
+
+        /**
+         * Default metadata folder: `<roms root parent>/ES-DE` when the ROMs root is
+         * on removable storage (Thor: `/storage/EBD7-FF2C/ES-DE`, next to
+         * `/storage/EBD7-FF2C/ROMs`), else ES-DE's data dir [esdeDataDir].
+         */
+        fun defaultEsdeMetadataDir(romsRoot: String, esdeDataDir: String): String {
+            val root = java.io.File(romsRoot)
+            val removable = runCatching { android.os.Environment.isExternalStorageRemovable(root) }
+                .getOrElse { romsRoot.startsWith("/storage/") && !romsRoot.startsWith("/storage/emulated/") }
+            val parent = root.absoluteFile.parentFile
+            return if (removable && parent != null) java.io.File(parent, "ES-DE").path else esdeDataDir
+        }
     }
 
     /**
@@ -192,6 +209,18 @@ class SettingsDataStore(private val context: Context) {
     val esdeDataDir: Flow<String> = context.dataStore.data.map {
         it[ESDE_DATA_DIR] ?: DEFAULT_ESDE_DATA_DIR
     }
+    /** Effective ES-DE / Cocoon metadata folder (explicit setting, else [defaultEsdeMetadataDir]). */
+    val esdeMetadataDir: Flow<String> = context.dataStore.data.map { resolveEsdeMetadataDir(it) }
+    val esdePushMediaEnabled: Flow<Boolean> = context.dataStore.data.map {
+        it[ESDE_PUSH_MEDIA_ENABLED] ?: true
+    }
+
+    private fun resolveEsdeMetadataDir(prefs: Preferences): String =
+        prefs[ESDE_METADATA_DIR]?.takeIf { it.isNotBlank() }
+            ?: defaultEsdeMetadataDir(
+                prefs[ROMS_ROOT_PATH] ?: DEFAULT_ROMS_PATH,
+                prefs[ESDE_DATA_DIR] ?: DEFAULT_ESDE_DATA_DIR,
+            )
     val retroHraiMediaPath: Flow<String> = context.dataStore.data.map {
         it[RETROHRAI_MEDIA_PATH] ?: DEFAULT_RETROHRAI_MEDIA_PATH
     }
@@ -414,6 +443,16 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[ESDE_DATA_DIR] = path.trimEnd('/') }
     }
 
+    /** Blank reverts to the derived default ([defaultEsdeMetadataDir]). */
+    suspend fun setEsdeMetadataDir(path: String) {
+        val value = path.trim().trimEnd('/')
+        context.dataStore.edit { if (value.isEmpty()) it.remove(ESDE_METADATA_DIR) else it[ESDE_METADATA_DIR] = value }
+    }
+
+    suspend fun setEsdePushMediaEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[ESDE_PUSH_MEDIA_ENABLED] = enabled }
+    }
+
     suspend fun setEsdeExportEnabled(enabled: Boolean) {
         context.dataStore.edit { it[ESDE_EXPORT_ENABLED] = enabled }
     }
@@ -526,10 +565,17 @@ class SettingsDataStore(private val context: Context) {
         }.getOrNull()
     }
 
-    fun getEsdeDataDirBlocking(): String {
+    /** Effective ES-DE / Cocoon metadata folder, for workers and the install service. */
+    fun getEsdeMetadataDirBlocking(): String {
         return runCatching {
-            runBlocking { context.dataStore.data.first()[ESDE_DATA_DIR] ?: DEFAULT_ESDE_DATA_DIR }
+            runBlocking { resolveEsdeMetadataDir(context.dataStore.data.first()) }
         }.getOrDefault(DEFAULT_ESDE_DATA_DIR)
+    }
+
+    fun getEsdePushMediaEnabledBlocking(): Boolean {
+        return runCatching {
+            runBlocking { context.dataStore.data.first()[ESDE_PUSH_MEDIA_ENABLED] ?: true }
+        }.getOrDefault(true)
     }
 
     fun getRetroHraiMediaPathBlocking(): String {
