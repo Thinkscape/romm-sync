@@ -13,6 +13,7 @@ import es.davidrg.rommsync.core.remote.dto.RomDetailDto
 import es.davidrg.rommsync.core.remote.dto.RomFileDto
 import io.socket.client.IO
 import io.socket.client.Socket
+import io.socket.engineio.client.transports.WebSocket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -220,19 +221,8 @@ class InstallClient(
 
     private fun openSocket(): Socket {
         val base = URI(baseUrl.trimEnd('/'))
-        val prefix = base.rawPath.orEmpty().trimEnd('/')
         val namespaceUri = URI(base.scheme, base.rawAuthority, NAMESPACE, null, null)
-        val options = IO.Options.builder()
-            .setForceNew(true)
-            .setPath(prefix + SOCKET_PATH)
-            .setAuth(mapOf("token" to token))
-            .setExtraHeaders(mapOf("Authorization" to listOf("Bearer $token")))
-            .setReconnection(true)
-            .setReconnectionDelay(RECONNECT_DELAY_MS)
-            .setReconnectionDelayMax(RECONNECT_DELAY_MAX_MS)
-            .build()
-        options.callFactory = baseClient
-        options.webSocketFactory = baseClient
+        val options = socketOptions(baseUrl, token, baseClient)
 
         val s = IO.socket(namespaceUri, options)
         s.on(Socket.EVENT_CONNECT) {
@@ -551,6 +541,29 @@ class InstallClient(
         private const val BUFFER_SIZE = 256 * 1024
         private const val PROGRESS_STEP_BYTES = 1L shl 20
         private val AUTH_REFUSALS = setOf("unauthorized", "disabled")
+
+        /**
+         * Socket.io options for RomM's `/devices` namespace. WebSocket only: RomM runs several
+         * web workers without session affinity, so Engine.IO long-polling fails with
+         * "Invalid session" when consecutive polls hit different workers. The Bearer
+         * header goes into the WebSocket handshake through `extraHeaders`.
+         */
+        internal fun socketOptions(baseUrl: String, token: String, httpClient: OkHttpClient): IO.Options {
+            val prefix = URI(baseUrl.trimEnd('/')).rawPath.orEmpty().trimEnd('/')
+            val options = IO.Options.builder()
+                .setForceNew(true)
+                .setPath(prefix + SOCKET_PATH)
+                .setTransports(arrayOf(WebSocket.NAME))
+                .setAuth(mapOf("token" to token))
+                .setExtraHeaders(mapOf("Authorization" to listOf("Bearer $token")))
+                .setReconnection(true)
+                .setReconnectionDelay(RECONNECT_DELAY_MS)
+                .setReconnectionDelayMax(RECONNECT_DELAY_MAX_MS)
+                .build()
+            options.callFactory = httpClient
+            options.webSocketFactory = httpClient
+            return options
+        }
 
         private fun errorMessage(arg: Any?): String? = when (arg) {
             is JSONObject -> arg.optString("message").ifBlank { arg.toString() }
