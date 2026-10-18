@@ -30,6 +30,15 @@
     <!-- Restart the RomM device service (push installs) after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Optional, granted over adb: lets the app switch its own Cocoon auto-import accessibility service on -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Cocoon auto-import: version check and launch intent -->
+    <queries>
+        <package android:name="rip.moth.cocoonshell" />
+    </queries>
+
     <application
         android:name=".RomMSyncApplication"
         android:allowBackup="false"
@@ -68,6 +77,20 @@
             android:name=".install.InstallListenerService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Cocoon has no rescan API: drives Settings → Library & data → Rescan Games after pushes -->
+        <service
+            android:name=".install.CocoonRescanService"
+            android:exported="true"
+            android:label="@string/cocoon_rescan_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/cocoon_rescan_service" />
+        </service>
 
         <receiver
             android:name=".install.BootReceiver"

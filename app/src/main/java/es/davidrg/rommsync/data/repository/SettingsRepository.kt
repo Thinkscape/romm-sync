@@ -45,6 +45,7 @@ class SettingsRepository(private val dataStore: SettingsDataStore) {
     val esdeDataDir: Flow<String> = dataStore.esdeDataDir
     val esdeMetadataDir: Flow<String> = dataStore.esdeMetadataDir
     val esdePushMediaEnabled: Flow<Boolean> = dataStore.esdePushMediaEnabled
+    val cocoonAutoImportEnabled: Flow<Boolean> = dataStore.cocoonAutoImportEnabled
     val retroHraiMediaPath: Flow<String> = dataStore.retroHraiMediaPath
     val esdeExportEnabled: Flow<Boolean> = dataStore.esdeExportEnabled
     val retroHraiExportEnabled: Flow<Boolean> = dataStore.retroHraiExportEnabled
@@ -60,6 +61,7 @@ class SettingsRepository(private val dataStore: SettingsDataStore) {
     suspend fun setEsdeDataDir(path: String) = dataStore.setEsdeDataDir(path)
     suspend fun setEsdeMetadataDir(path: String) = dataStore.setEsdeMetadataDir(path)
     suspend fun setEsdePushMediaEnabled(enabled: Boolean) = dataStore.setEsdePushMediaEnabled(enabled)
+    suspend fun setCocoonAutoImportEnabled(enabled: Boolean) = dataStore.setCocoonAutoImportEnabled(enabled)
     suspend fun setRetroHraiMediaPath(path: String) = dataStore.setRetroHraiMediaPath(path)
     suspend fun setEsdeExportEnabled(enabled: Boolean) = dataStore.setEsdeExportEnabled(enabled)
     suspend fun setRetroHraiExportEnabled(enabled: Boolean) =

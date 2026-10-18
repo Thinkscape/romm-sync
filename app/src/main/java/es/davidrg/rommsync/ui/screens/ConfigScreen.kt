@@ -161,6 +161,7 @@ fun ConfigScreen() {
     // ES-DE / Cocoon metadata folder (push installs + platform export)
     val esdeMetadataDir by container.settingsRepository.esdeMetadataDir.collectAsState(initial = "")
     val esdePushMedia by container.settingsRepository.esdePushMediaEnabled.collectAsState(initial = true)
+    val cocoonAutoImport by container.settingsRepository.cocoonAutoImportEnabled.collectAsState(initial = true)
 
     // Cargar ruta de media de RetroHRAI
     val retroHraiMediaPath by container.settingsRepository.retroHraiMediaPath.collectAsState(
@@ -536,6 +537,62 @@ fun ConfigScreen() {
                             viewModel.setEsdePushMediaEnabled(enabled)
                         },
                     )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                var cocoonAutoImportLocal by remember { mutableStateOf<Boolean?>(null) }
+                var cocoonServiceOn by remember {
+                    mutableStateOf(es.davidrg.rommsync.install.CocoonAutoImport.isServiceEnabled(context))
+                }
+                LaunchedEffect(Unit) {
+                    // Picks up the user returning from Android's accessibility settings.
+                    while (true) {
+                        cocoonServiceOn = es.davidrg.rommsync.install.CocoonAutoImport.isServiceEnabled(context)
+                        kotlinx.coroutines.delay(2_000)
+                    }
+                }
+                val cocoonAutoImportOn = cocoonAutoImportLocal ?: cocoonAutoImport
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(tr("android.config.cocoon_auto_import"), style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            tr("android.config.cocoon_auto_import_hint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = cocoonAutoImportOn,
+                        onCheckedChange = { enabled ->
+                            cocoonAutoImportLocal = enabled
+                            viewModel.setCocoonAutoImportEnabled(enabled)
+                            if (enabled) {
+                                es.davidrg.rommsync.install.CocoonAutoImport.ensureServiceEnabled(context)
+                            } else {
+                                es.davidrg.rommsync.install.CocoonAutoImport.clearPending(context)
+                                es.davidrg.rommsync.install.CocoonAutoImport.disableService(context)
+                            }
+                            cocoonServiceOn = es.davidrg.rommsync.install.CocoonAutoImport.isServiceEnabled(context)
+                        },
+                    )
+                }
+                if (cocoonAutoImportOn) {
+                    Text(
+                        tr(if (cocoonServiceOn) "android.config.cocoon_service_on" else "android.config.cocoon_service_off"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (cocoonServiceOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    )
+                    if (!cocoonServiceOn) {
+                        TextButton(onClick = {
+                            context.startActivity(es.davidrg.rommsync.install.CocoonAutoImport.accessibilitySettingsIntent())
+                        }) {
+                            Text(tr("android.config.cocoon_service_open"))
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 CommittedPathField(

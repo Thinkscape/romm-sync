@@ -206,13 +206,14 @@ class InstallListenerService : Service() {
                 schedulePostInstallSync()
             }
             if (status == InstallClient.STATUS_DONE && files.isNotEmpty()) {
-                // Launchers such as Cocoon have no rescan intent; this at least updates MediaStore.
+                // Updates MediaStore; Cocoon itself only imports through its Rescan Games UI.
                 MediaScannerConnection.scanFile(
                     applicationContext,
                     files.map { it.absolutePath }.toTypedArray(),
                     null,
                     null,
                 )
+                CocoonAutoImport.onGameInstalled(applicationContext)
             }
         }
 
@@ -332,7 +333,7 @@ class InstallListenerService : Service() {
         private const val TAG = "InstallListener"
         private const val ACTION_DRAIN = "es.davidrg.rommsync.install.DRAIN"
         private const val CHANNEL_SERVICE = "romm_device"
-        private const val CHANNEL_RESULTS = "romm_installs"
+        internal const val CHANNEL_RESULTS = "romm_installs"
         private const val NOTIFICATION_ID_SERVICE = 4201
         private const val NOTIFICATION_TAG_INSTALL = "romm_install"
         private const val SCREEN_ON_SYNC_DELAY_MS = 2 * 60_000L

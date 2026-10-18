@@ -344,6 +344,10 @@ class ConfigViewModel(
         viewModelScope.launch { settingsRepository.setEsdePushMediaEnabled(enabled) }
     }
 
+    fun setCocoonAutoImportEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setCocoonAutoImportEnabled(enabled) }
+    }
+
     fun setRetroHraiMediaPath(path: String) {
         viewModelScope.launch { settingsRepository.setRetroHraiMediaPath(path) }
     }

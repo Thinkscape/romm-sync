@@ -62,6 +62,8 @@ class SettingsDataStore(private val context: Context) {
         val ESDE_METADATA_DIR = stringPreferencesKey("esde_metadata_dir")
         /** Export RomM media + gamelist entry after each push install (absent = on). */
         val ESDE_PUSH_MEDIA_ENABLED = booleanPreferencesKey("esde_push_media_enabled")
+        /** Run Cocoon's Rescan Games through [es.davidrg.rommsync.install.CocoonRescanService] after pushes (absent = on). */
+        val COCOON_AUTO_IMPORT_ENABLED = booleanPreferencesKey("cocoon_auto_import_enabled")
         val RETROHRAI_MEDIA_PATH = stringPreferencesKey("retrohrai_media_path")
 
         // Toggles de funciones opcionales (opt-out: ausencia = activado)
@@ -213,6 +215,9 @@ class SettingsDataStore(private val context: Context) {
     val esdeMetadataDir: Flow<String> = context.dataStore.data.map { resolveEsdeMetadataDir(it) }
     val esdePushMediaEnabled: Flow<Boolean> = context.dataStore.data.map {
         it[ESDE_PUSH_MEDIA_ENABLED] ?: true
+    }
+    val cocoonAutoImportEnabled: Flow<Boolean> = context.dataStore.data.map {
+        it[COCOON_AUTO_IMPORT_ENABLED] ?: true
     }
 
     private fun resolveEsdeMetadataDir(prefs: Preferences): String =
@@ -453,6 +458,10 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[ESDE_PUSH_MEDIA_ENABLED] = enabled }
     }
 
+    suspend fun setCocoonAutoImportEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[COCOON_AUTO_IMPORT_ENABLED] = enabled }
+    }
+
     suspend fun setEsdeExportEnabled(enabled: Boolean) {
         context.dataStore.edit { it[ESDE_EXPORT_ENABLED] = enabled }
     }
@@ -575,6 +584,12 @@ class SettingsDataStore(private val context: Context) {
     fun getEsdePushMediaEnabledBlocking(): Boolean {
         return runCatching {
             runBlocking { context.dataStore.data.first()[ESDE_PUSH_MEDIA_ENABLED] ?: true }
+        }.getOrDefault(true)
+    }
+
+    fun getCocoonAutoImportEnabledBlocking(): Boolean {
+        return runCatching {
+            runBlocking { context.dataStore.data.first()[COCOON_AUTO_IMPORT_ENABLED] ?: true }
         }.getOrDefault(true)
     }
 
