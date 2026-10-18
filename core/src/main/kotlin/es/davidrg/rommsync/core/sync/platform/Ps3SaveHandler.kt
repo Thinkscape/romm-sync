@@ -41,7 +41,8 @@ class Ps3SaveHandler : SaveHandler {
         romLocalPath: String?,
     ): List<LocalSave> = withContext(Dispatchers.IO) {
         val results = mutableListOf<LocalSave>()
-        val serial = extractSerial(romFileName) ?: return@withContext results
+        val serial = resolveRomId(romLocalPath, platformSlug) { extractSerial(romFileName) }
+            ?: return@withContext results
         val saveDir = findSaveDir(savesBasePath, serial) ?: return@withContext results
 
         val files = saveDir.walkTopDown().filter { it.isFile }.toList()
@@ -69,7 +70,8 @@ class Ps3SaveHandler : SaveHandler {
         romId: Int, romFileName: String, platformSlug: String,
         savesBasePath: String, romLocalPath: String?,
     ): String? = withContext(Dispatchers.IO) {
-        val serial = extractSerial(romFileName) ?: return@withContext null
+        val serial = resolveRomId(romLocalPath, platformSlug) { extractSerial(romFileName) }
+            ?: return@withContext null
         val saveDir = findSaveDir(savesBasePath, serial) ?: return@withContext null
         folderFingerprint(saveDir)
     }
@@ -80,8 +82,13 @@ class Ps3SaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
-        val serial = extractSerial(romFileName) ?: return@withContext false
+        // Serial from the ROM (header reader, then file name), else from the
+        // asset name (`<serial>_ps3_save.zip`, as findSaves names uploads).
+        val serial = resolveRomId(romLocalPath, platformSlug) { extractSerial(romFileName) }
+            ?: extractSerial(targetFileName)
+            ?: return@withContext false
 
         // Ruta destino: reconstruir con el userId local.
         val savedataRoot = savedataRoot(savesBasePath)

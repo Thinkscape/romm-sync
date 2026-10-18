@@ -119,11 +119,18 @@ class Ps2SaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
         // Tar creado por findRootSaves (ruta inaccesible + root): extraer con su
         if (targetFileName.endsWith(".tar")) {
             return@withContext extractRootTar(tempFile, savesBasePath)
         }
+
+        // Uploads are named `BA<serial>_save.zip`, so the asset name is the
+        // last resort when neither the ROM header nor its file name has one.
+        val serial = resolveRomId(romLocalPath, platformSlug) { extractSerialFromFileName(romFileName) }
+            ?: extractSerialFromFileName(targetFileName)
+            ?: return@withContext false
 
         val memcardsDir = File(savesBasePath)
         // Si la ruta no es accesible con la API File (Android 13+ bloquea
@@ -131,13 +138,12 @@ class Ps2SaveHandler : SaveHandler {
         // con root se extrae el zip a un temp accesible y se copia con su.
         if (!memcardsDir.isDirectory && !memcardsDir.mkdirs()) {
             return@withContext if (RootShell.available) {
-                extractZipViaRoot(tempFile, romFileName, savesBasePath)
+                extractZipViaRoot(tempFile, serial, savesBasePath)
             } else {
                 false
             }
         }
 
-        val serial = extractSerialFromFileName(romFileName) ?: return@withContext false
         val baSerial = toBaFolderName(serial)
 
         // Encontrar o crear una memory card
@@ -332,8 +338,7 @@ class Ps2SaveHandler : SaveHandler {
      * del card dir con su. La estructura original (cardName.ps2/BASLUS-xxxx)
      * se reconstruye bajo savesBasePath.
      */
-    private fun extractZipViaRoot(tempFile: File, romFileName: String, savesBasePath: String): Boolean {
-        val serial = extractSerialFromFileName(romFileName) ?: return false
+    private fun extractZipViaRoot(tempFile: File, serial: String, savesBasePath: String): Boolean {
         val baSerial = toBaFolderName(serial)
 
         // 1. Extraer el zip a un temp accesible

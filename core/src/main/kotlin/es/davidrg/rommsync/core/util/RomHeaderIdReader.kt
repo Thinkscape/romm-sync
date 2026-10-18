@@ -2,25 +2,28 @@ package es.davidrg.rommsync.core.util
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.zip.ZipFile
 
 /**
  * Extracción de identificadores de juego desde los headers binarios de las
- * imágenes de disco (ISO plano).
+ * imágenes de disco.
  *
  * Sustituye a la inferencia por nombre de fichero, que falla cuando el ROM
  * no incluye el ID en el nombre (p. ej. "Pokemon Esmeralda.gba").
  *
- * Formatos soportados (ISO sin comprimir):
- * - **PSP**: PARAM.SFO (magic "\0PSF") dentro del ISO → campo DISC_ID.
- *   Se escanea el primer MB del ISO buscando el SFO embebido.
- * - **PS2**: SYSTEM.CNF al inicio del ISO → línea BOOT2 = cdrom0:\SLUS_210.50
- *   → serial `SLUS-21050`.
- * - **GameCube**: game code en offset 0x0440 (boot.bin), 4 chars.
- * - **Wii**: game code en offset 0x0000, 4-6 chars.
+ * Disc formats (only the sectors/headers needed are read, never whole files):
+ * - **PSP** (ISO, CSO/ZSO): `UMD_DATA.BIN` or `PSP_GAME/PARAM.SFO` (DISC_ID) via
+ *   ISO9660 → `ULUS10041`; fallback: scan of the first MB for an embedded SFO.
+ * - **PS2** (ISO, CSO/ZSO, raw BIN, CHD v5 CD/DVD): `SYSTEM.CNF` line
+ *   `BOOT2 = cdrom0:\SLUS_210.50;1` → `SLUS-21050`; fallback: scan of the first 2 MB.
+ * - **GameCube / Wii** (ISO/GCM, RVZ/WIA, WBFS, Dolphin CISO): 6-char game ID
+ *   from the disc header (`GAFE01`), or the 4-char game code when the maker code
+ *   is not alphanumeric.
+ * - Any of the above inside a `.zip` (largest disc entry, streamed). `.7z`
+ *   archives are not read (no solid-archive random access): null.
+ * - **Switch** (XCI/NSP) and **3DS** (3DS/CCI/CIA): see below; uncompressed only.
  *
- * Formatos comprimidos (CSO/CHD/GZ) y Switch (XCI/NSP): no soportados,
- * devuelven null → el llamador hace fallback a [extractIdFromFileName].
- *
+ * Null → el llamador hace fallback a la extracción por nombre de fichero.
  * Todos los métodos devuelven null ante cualquier error de lectura.
  */
 object RomHeaderIdReader {
@@ -29,6 +32,11 @@ object RomHeaderIdReader {
     private const val SWITCH_SCAN_BYTES = 512 * 1024    // 512 KB (tabla PFS0 + inicio NCA)
     private const val PS2_SCAN_BYTES = 2 * 1024 * 1024  // 2 MB
     private const val N3DS_SCAN_BYTES = 2 * 1024 * 1024 // 2 MB (CIA: TMD + primer NCCH)
+
+    /** Entries of a zip considered disc images (the largest one is read). */
+    private val ZIP_DISC_EXTENSIONS = setOf(
+        "iso", "cso", "zso", "ciso", "bin", "img", "chd", "gcm", "rvz", "wia", "wbfs",
+    )
 
     /**
      * Punto de entrada: extrae el ID del juego leyendo el header binario
@@ -40,8 +48,7 @@ object RomHeaderIdReader {
             when (platformSlug.lowercase()) {
                 "psp" -> readPspDiscId(file)
                 "ps2" -> readPs2Serial(file)
-                "gc", "gamecube", "ngc" -> readGameCubeId(file)
-                "wii" -> readWiiId(file)
+                "gc", "gamecube", "ngc", "wii" -> readNintendoDiscId(file)
                 "switch", "nx", "ryujinx", "switch-emulators" -> readSwitchTitleId(file)
                 in N3DS_SLUGS -> readN3dsTitleId(file)
                 else -> null
@@ -54,19 +61,68 @@ object RomHeaderIdReader {
     /** Slugs de plataforma que corresponden a Nintendo 3DS. */
     private val N3DS_SLUGS = setOf("3ds", "n3ds", "nintendo-3ds", "nintendo_3ds")
 
+    // ── Disc images ──────────────────────────────────────────────────────
+
+    /** Bytes of the image, unwrapping a `.zip`; null for `.7z` or a zip without a disc entry. */
+    private fun openImage(file: File): ByteSource? = when (file.extension.lowercase()) {
+        "7z" -> null
+        "zip" -> {
+            val zip = ZipFile(file)
+            val entry = zip.entries().asSequence()
+                .filter { !it.isDirectory && it.size > 0 }
+                .filter { it.name.substringAfterLast('.').lowercase() in ZIP_DISC_EXTENSIONS }
+                .maxByOrNull { it.size }
+            if (entry == null) {
+                zip.close()
+                null
+            } else {
+                ZipEntryByteSource(zip, entry)
+            }
+        }
+        else -> FileByteSource(file)
+    }
+
+    /** 2048-byte data sectors of a CD/DVD image, whatever its container. */
+    private fun openSectors(src: ByteSource): SectorSource? {
+        CsoReader.open(src)?.let { return FramedSectorSource(it, SectorSource.SECTOR_SIZE, 0) }
+        val head = src.read(0, 16) ?: return null
+        if (String(head, 0, 8, Charsets.US_ASCII) == "MComprHD") return ChdReader.open(src)?.dataTrack()
+        val rawSync = head[0].toInt() == 0 && (1..10).all { head[it].toInt() == -1 } && head[11].toInt() == 0
+        if (rawSync) return FramedSectorSource(src, 2352, if (head[15].toInt() == 2) 24 else 16)
+        return FramedSectorSource(src, SectorSource.SECTOR_SIZE, 0)
+    }
+
+    private fun <T> withSectors(file: File, block: (SectorSource) -> T?): T? =
+        openImage(file)?.use { src -> openSectors(src)?.let(block) }
+
     // ── PSP ──────────────────────────────────────────────────────────────
 
     /**
-     * Escanea el prefijo del ISO buscando un PARAM.SFO embebido y parsea su
-     * campo DISC_ID (formato `ULUS10064` / `ULUS-10064`).
+     * `UMD_DATA.BIN` (`ULUS-10041|…`) or `PSP_GAME/PARAM.SFO` from the ISO9660
+     * tree; without a file system, scans the first MB for an embedded PARAM.SFO.
      */
-    private fun readPspDiscId(file: File): String? {
-        if (isCompressed(file)) return null
-        val prefix = readPrefix(file, PSP_SCAN_BYTES) ?: return null
-        val sfoIndex = indexOf(prefix, byteArrayOf(0x00, 0x50, 0x53, 0x46)) // "\0PSF"
-        if (sfoIndex < 0) return null
-        return parseSfoDiscId(prefix, sfoIndex)
+    private fun readPspDiscId(file: File): String? = withSectors(file) { sectors ->
+        val fromFs = if (Iso9660.isIso(sectors)) {
+            Iso9660.readFile(sectors, "UMD_DATA.BIN", 16)?.let(::parseUmdData)
+                ?: Iso9660.readFile(sectors, "PSP_GAME/PARAM.SFO", 64 * 1024)
+                    ?.takeIf { it.size >= 0x14 && indexOf(it, SFO_MAGIC) == 0 }
+                    ?.let { parseSfoDiscId(it, 0) }
+        } else {
+            null
+        }
+        fromFs ?: run {
+            val prefix = sectors.readUserData(PSP_SCAN_BYTES / SectorSource.SECTOR_SIZE)
+            val sfoIndex = indexOf(prefix, SFO_MAGIC)
+            if (sfoIndex < 0) null else parseSfoDiscId(prefix, sfoIndex)
+        }
     }
+
+    private val SFO_MAGIC = byteArrayOf(0x00, 0x50, 0x53, 0x46) // "\0PSF"
+    private val PSP_DISC_ID = Regex("[A-Z]{4}\\d{5}")
+
+    /** `UMD_DATA.BIN` starts with the disc id, e.g. `ULUS-10041|…`. */
+    private fun parseUmdData(bytes: ByteArray): String? =
+        String(bytes, Charsets.US_ASCII).substringBefore('|').replace("-", "").takeIf { it.matches(PSP_DISC_ID) }
 
     /**
      * Layout del PARAM.SFO:
@@ -100,7 +156,7 @@ object RomHeaderIdReader {
                 val value = readCString(prefix, dataStart, 16)
                 return value
                     ?.replace("-", "")
-                    ?.takeIf { it.matches(Regex("[A-Z]{4}\\d{5}")) }
+                    ?.takeIf { it.matches(PSP_DISC_ID) }
             }
             idx += 16
         }
@@ -110,54 +166,32 @@ object RomHeaderIdReader {
     // ── PS2 ──────────────────────────────────────────────────────────────
 
     /**
-     * Busca SYSTEM.CNF en el prefijo del ISO y extrae el serial de la línea
-     * `BOOT2 = cdrom0:\SLUS_210.50;1` → `SLUS-21050`.
+     * `SYSTEM.CNF` from the ISO9660 root (or, without a file system, a scan of
+     * the first 2 MB) → línea `BOOT2 = cdrom0:\SLUS_210.50;1` → `SLUS-21050`.
      */
-    private fun readPs2Serial(file: File): String? {
-        if (isCompressed(file)) return null
-        val prefix = readPrefix(file, PS2_SCAN_BYTES) ?: return null
-        val bootIdx = indexOf(prefix, "BOOT2".toByteArray())
+    private fun readPs2Serial(file: File): String? = withSectors(file) { sectors ->
+        val cnf = if (Iso9660.isIso(sectors)) Iso9660.readFile(sectors, "SYSTEM.CNF", 4096) else null
+        cnf?.let(::parseBoot2) ?: parseBoot2(sectors.readUserData(PS2_SCAN_BYTES / SectorSource.SECTOR_SIZE))
+    }
+
+    private fun parseBoot2(bytes: ByteArray): String? {
+        val bootIdx = indexOf(bytes, "BOOT2".toByteArray())
         if (bootIdx < 0) return null
-        val windowEnd = minOf(bootIdx + 200, prefix.size)
-        val text = String(prefix, bootIdx, windowEnd - bootIdx, Charsets.US_ASCII)
+        val windowEnd = minOf(bootIdx + 200, bytes.size)
+        val text = String(bytes, bootIdx, windowEnd - bootIdx, Charsets.US_ASCII)
         val match = Regex("""cdrom0:\\?([A-Z]{4})_(\d{3})\.(\d{2})""").find(text) ?: return null
         val (code, major, minor) = match.destructured
         return "${code}-${major}${minor}"
     }
 
-    // ── GameCube ─────────────────────────────────────────────────────────
+    // ── GameCube / Wii ───────────────────────────────────────────────────
 
     /**
-     * GC: el boot.bin empieza en 0x0440 del disco; los primeros 4 bytes son
-     * el game code (p. ej. `GMSE` para Super Smash Bros. Melee USA).
+     * Both consoles keep the game ID at disc offset 0 (`GAFE01` = game code
+     * `GAFE` + maker `01`); see [NintendoDiscHeader] for the containers.
      */
-    private fun readGameCubeId(file: File): String? {
-        if (isCompressed(file)) return null
-        RandomAccessFile(file, "r").use { raf ->
-            raf.seek(0x0440)
-            val code = ByteArray(4)
-            raf.readFully(code)
-            val gameCode = String(code, Charsets.US_ASCII)
-            return gameCode.takeIf { it.matches(Regex("[A-Z0-9]{4}")) }
-        }
-    }
-
-    // ── Wii ──────────────────────────────────────────────────────────────
-
-    /**
-     * Wii: game code en offset 0x0000 (4 chars; los 2 siguientes son
-     * publisher/region, se omiten para igualar el formato corto de GC).
-     */
-    private fun readWiiId(file: File): String? {
-        if (isCompressed(file)) return null
-        RandomAccessFile(file, "r").use { raf ->
-            raf.seek(0x0000)
-            val code = ByteArray(4)
-            raf.readFully(code)
-            val gameCode = String(code, Charsets.US_ASCII)
-            return gameCode.takeIf { it.matches(Regex("[A-Z0-9]{4}")) }
-        }
-    }
+    private fun readNintendoDiscId(file: File): String? =
+        openImage(file)?.use { src -> NintendoDiscHeader.read(src)?.let(NintendoDiscHeader::gameId) }
 
     // ── Utilidades ───────────────────────────────────────────────────────
 

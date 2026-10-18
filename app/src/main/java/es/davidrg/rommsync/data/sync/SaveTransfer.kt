@@ -27,8 +27,13 @@ class SaveTransfer(
     private val log: (message: String, error: Throwable?) -> Unit = { _, _ -> },
 ) {
 
-    /** The rom a transfer belongs to, as the save handlers need it. */
-    data class RomRef(val romId: Int, val fileName: String, val platformSlug: String)
+    /** The rom a transfer belongs to, as the save handlers need it (local path: header game id). */
+    data class RomRef(
+        val romId: Int,
+        val fileName: String,
+        val platformSlug: String,
+        val romLocalPath: String? = null,
+    )
 
     enum class UploadOutcome {
         OK,
@@ -129,6 +134,7 @@ class SaveTransfer(
                 platformSlug = rom.platformSlug,
                 savesBasePath = savesBasePath,
                 targetFileName = targetName,
+                romLocalPath = rom.romLocalPath,
             )
             if (ok) sha1(tempFile) else null
         } catch (e: Exception) {

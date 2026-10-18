@@ -94,6 +94,7 @@ class RetroArchSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
         val isState = STATE_PATTERN.matches(targetFileName)
         val subDir = if (isState) "states" else "saves"

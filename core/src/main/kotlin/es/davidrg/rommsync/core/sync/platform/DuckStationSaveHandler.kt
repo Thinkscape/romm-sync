@@ -58,6 +58,7 @@ class DuckStationSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
         // The server echoes the card's own file name; refuse anything that
         // is not a plain `.mcd` name so a download can never escape the dir.

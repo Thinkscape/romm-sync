@@ -54,6 +54,9 @@ object SavePaths {
     /** EmuDeck's saves root on the Steam Deck's SD card (`<ROMDirectory>/../saves`). */
     const val EMUDECK_SAVES_ROOT = "/run/media/deck/arcade/Emulation/saves"
 
+    /** Dolphin flatpak user directory, relative to `$HOME` (holds `GC/` and `Wii/`). */
+    const val DOLPHIN_FLATPAK_USER_DIR = ".var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu"
+
     /** EmuDeck layout on the Steam Deck. */
     val EMUDECK: SaveProfile = emudeck()
 
@@ -64,7 +67,10 @@ object SavePaths {
      * - `retroarch/{saves,states}` → RetroArch flatpak config dirs, flat
      *   (`sort_savefiles_enable=false`, `sort_savestates_enable=false`);
      * - `ppsspp/{saves,states}` → `PSP/SAVEDATA`, `PSP/PPSSPP_STATE`;
-     * - `dolphin/{GC,Wii}` real folders (`Wii/title/00010000/<id>/data`);
+     * - Dolphin: the flatpak's own `~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu/{GC,Wii}`
+     *   (GCI folders `GC/<USA|EUR|JAP>/Card A/`); EmuDeck's `dolphin/{GC,Wii}` are
+     *   separate folders Dolphin does not write to, used only when the flatpak
+     *   data dir does not exist;
      * - `pcsx2/{saves,states}` = PCSX2 `MemoryCards`/`Savestates` folders;
      * - `duckstation/{saves,states}` = DuckStation memory card / state folders
      *   (memory cards `PerGameTitle`);
@@ -75,15 +81,20 @@ object SavePaths {
      * - `Vita3K/saves` → `storage/Vita3K/ux0/user/00/savedata`;
      * - `Cemu/saves` → `roms/wiiu/mlc01/usr/save`.
      */
-    fun emudeck(savesRoot: String = EMUDECK_SAVES_ROOT): SaveProfile {
+    fun emudeck(
+        savesRoot: String = EMUDECK_SAVES_ROOT,
+        home: String = System.getProperty("user.home"),
+    ): SaveProfile {
         fun p(relative: String) = File(savesRoot, relative).path
+        val dolphinFlatpak = File(home, DOLPHIN_FLATPAK_USER_DIR)
+        val dolphinGc = if (dolphinFlatpak.isDirectory) File(dolphinFlatpak, "GC").path else p("dolphin/GC")
         return SaveProfile(
             name = "EMUDECK",
             host = SaveHost.LINUX,
             paths = mapOf(
                 EmulatorId.RETROARCH.id to EmulatorPaths(p("retroarch/saves"), p("retroarch/states")),
                 EmulatorId.PPSSPP.id to EmulatorPaths(p("ppsspp/saves"), p("ppsspp/states")),
-                EmulatorId.DOLPHIN.id to EmulatorPaths(p("dolphin/GC")),
+                EmulatorId.DOLPHIN.id to EmulatorPaths(dolphinGc),
                 EmulatorId.PCSX2.id to EmulatorPaths(p("pcsx2/saves"), p("pcsx2/states")),
                 EmulatorId.DUCKSTATION.id to EmulatorPaths(p("duckstation/saves"), p("duckstation/states")),
                 EmulatorId.MELONDS.id to EmulatorPaths(p("melonds/saves"), p("melonds/states")),

@@ -26,6 +26,9 @@ dependencies {
     // RomM device socket (install:queued / install:cancelled)
     implementation(libs.socketio.client)
 
+    // Raw LZMA for CHD disc images (RomHeaderIdReader)
+    implementation(libs.xz)
+
     // Tests
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

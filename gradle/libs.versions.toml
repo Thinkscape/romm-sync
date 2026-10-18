@@ -35,6 +35,9 @@ socketio = "2.1.2"
 # QR code for the pairing URL
 zxing = "3.5.3"
 
+# Raw LZMA decoding for CHD (cdlz/lzma) disc images
+xz = "1.10"
+
 [libraries]
 # AndroidX Core
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -77,6 +80,7 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 socketio-client = { group = "io.socket", name = "socket.io-client", version.ref = "socketio" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+xz = { group = "org.tukaani", name = "xz", version.ref = "xz" }
 moshi = { group = "com.squareup.moshi", name = "moshi", version.ref = "moshi" }
 moshi-kotlin = { group = "com.squareup.moshi", name = "moshi-kotlin", version.ref = "moshi" }
 

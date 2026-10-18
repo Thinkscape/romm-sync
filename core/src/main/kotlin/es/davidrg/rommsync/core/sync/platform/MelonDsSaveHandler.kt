@@ -70,6 +70,7 @@ class MelonDsSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
         val targetDir = File(savesBasePath)
         targetDir.mkdirs()

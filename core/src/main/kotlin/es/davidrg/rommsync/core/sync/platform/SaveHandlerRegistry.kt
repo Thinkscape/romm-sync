@@ -237,6 +237,7 @@ object SaveHandlerRegistry {
             platformSlug: String,
             savesBasePath: String,
             targetFileName: String,
+            romLocalPath: String?,
         ): Boolean = false
     }
 

@@ -71,12 +71,13 @@ class Vita3KSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
         // The zip's top folder is the authoritative title id; the asset name
-        // and the ROM name are fallbacks for zips produced elsewhere.
+        // and the ROM are fallbacks for zips produced elsewhere.
         val titleId = firstZipEntryTopDir(tempFile)?.takeIf { TITLE_ID.matches(it) }
             ?: targetFileName.removeSuffix(ZIP_SUFFIX).takeIf { TITLE_ID.matches(it) }
-            ?: extractTitleId(romFileName)
+            ?: resolveTitleId(romFileName, romLocalPath)
             ?: return@withContext false
 
         val targetDir = findSaveDir(savesBasePath, titleId) ?: File(savesBasePath, titleId)

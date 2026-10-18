@@ -1,39 +1,38 @@
 package es.davidrg.rommsync.core.sync.platform
 
-import es.davidrg.rommsync.core.util.RomHeaderIdReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.util.zip.ZipEntry
+import java.io.RandomAccessFile
 import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 
 /**
  * Handler de saves para Dolphin (GameCube y Wii).
  *
- * GameCube (modo GCI Folder), basePath = directorio GC:
+ * GameCube (modo GCI Folder, Dolphin's default slot A device on desktop and
+ * Android), basePath = directorio GC; see [DolphinGciLayout]:
  * ```
- * {basePath}/{region}/Card A/{gameId}-*.gci
+ * {basePath}/{USA|EUR|JAP}/Card A/{maker}-{gamecode}-{filename}.gci
  * ```
  *
  * Wii, basePath = directorio Wii/title:
  * ```
  * {basePath}/{titleIdHigh}/{titleIdLow}/data/
  * ```
+ * where `titleIdLow` is the 4-char game code as 8 hex digits (`RSBE` → `52534245`).
  *
- * En Android, la base por defecto es:
- *  - GC:  `/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/GC`
- *  - Wii: `/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/Wii/title`
+ * Bases por defecto:
+ *  - Android GC:  `/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/GC`
+ *  - Android Wii: `/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/Wii/title`
+ *  - Linux flatpak (EmuDeck): `~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu/{GC,Wii/title}`
  *
- * Para GC: se buscan ficheros .gci cuyo nombre empieza con el game-id (6 chars,
- * extraído del nombre del ROM). Se agrupan en zip para sync.
- *
- * Para Wii: se busca la carpeta de título y se zipea entera.
- *
- * NOTA: esta versión extrae el game-id del nombre del fichero ROM si sigue el
- * formato estándar (p.ej. "GALE01 - Super Smash Bros Melee.iso").
+ * The game id (`GAFE01`: game code + 2-char maker) comes from the local disc
+ * header, else the ROM file name, else (on restore) the asset name
+ * `<gameId>_gc_saves.zip` that [findSaves] gives uploads. GC saves of a game
+ * travel as one deterministic zip of its GCI files; Wii saves as a zip of the
+ * title folder relative to `Wii/title`.
  */
 class DolphinSaveHandler : SaveHandler {
 
@@ -45,11 +44,7 @@ class DolphinSaveHandler : SaveHandler {
         romLocalPath: String?,
     ): List<LocalSave> = withContext(Dispatchers.IO) {
         val results = mutableListOf<LocalSave>()
-        // Game ID: primero desde el header del disco (GC 0x0440 / Wii 0x0000),
-        // luego desde el nombre del fichero.
-        val gameId = romLocalPath?.let { RomHeaderIdReader.readGameId(File(it), platformSlug) }
-            ?: extractGameId(romFileName)
-        if (gameId == null) return@withContext results
+        val gameId = resolveGameId(romFileName, platformSlug, romLocalPath) ?: return@withContext results
 
         if (platformSlug.lowercase() in GC_SLUGS) {
             findGcSaves(romId, gameId, savesBasePath, results)
@@ -66,15 +61,13 @@ class DolphinSaveHandler : SaveHandler {
         romId: Int, romFileName: String, platformSlug: String,
         savesBasePath: String, romLocalPath: String?,
     ): String? = withContext(Dispatchers.IO) {
-        val gameId = romLocalPath?.let { RomHeaderIdReader.readGameId(File(it), platformSlug) }
-            ?: extractGameId(romFileName) ?: return@withContext null
-        // GC: carpeta del gameId con ficheros GCI; Wii: title/data
-        val wiiTitleDir = File(savesBasePath)
+        val gameId = resolveGameId(romFileName, platformSlug, romLocalPath) ?: return@withContext null
         if (platformSlug.lowercase() in GC_SLUGS) {
-            folderFingerprint(File(savesBasePath))
+            DolphinGciLayout.findSaves(File(savesBasePath), gameId)
+                .joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
+                .ifEmpty { null }
         } else {
-            val titleDir = File(wiiTitleDir, gameId)
-            folderFingerprint(File(titleDir, "data"))
+            findWiiDataDir(File(savesBasePath), gameId)?.let { folderFingerprint(it) }
         }
     }
 
@@ -84,15 +77,21 @@ class DolphinSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
-        val gameId = extractGameId(romFileName) ?: return@withContext false
-
         if (platformSlug.lowercase() in GC_SLUGS) {
-            extractGcDownload(tempFile, gameId, savesBasePath)
+            val gameId = resolveGameId(romFileName, platformSlug, romLocalPath)
+                ?: extractGameId(targetFileName)
+                ?: return@withContext false
+            DolphinGciLayout.restore(tempFile, File(savesBasePath), gameId)
         } else {
+            // The zip carries `{high}/{low}/...`: no game id needed to restore it.
             extractWiiDownload(tempFile, savesBasePath)
         }
     }
+
+    private fun resolveGameId(romFileName: String, platformSlug: String, romLocalPath: String?): String? =
+        resolveRomId(romLocalPath, platformSlug) { extractGameId(romFileName) }?.uppercase()
 
     // ── GameCube ──────────────────────────────────────────────────────────
 
@@ -102,21 +101,7 @@ class DolphinSaveHandler : SaveHandler {
         basePath: String,
         results: MutableList<LocalSave>,
     ) {
-        // basePath ya apunta al directorio GC
-        val gcDir = File(basePath)
-        if (!gcDir.isDirectory) return
-
-        val gciFiles = mutableListOf<File>()
-        REGIONS.forEach { region ->
-            val cardDir = File(gcDir, "$region/Card A")
-            if (cardDir.isDirectory) {
-                cardDir.listFiles()?.filter { file ->
-                    file.isFile && file.extension.equals("gci", ignoreCase = true)
-                        && file.name.startsWith(gameId, ignoreCase = true)
-                }?.let { gciFiles.addAll(it) }
-            }
-        }
-
+        val gciFiles = DolphinGciLayout.findSaves(File(basePath), gameId)
         if (gciFiles.isEmpty()) return
 
         val newestMtime = gciFiles.maxOf { it.lastModified() }
@@ -134,40 +119,6 @@ class DolphinSaveHandler : SaveHandler {
         )
     }
 
-    private fun extractGcDownload(tempFile: File, gameId: String, basePath: String): Boolean {
-        // basePath ya apunta al directorio GC. Extraer a la primera region
-        // que exista, o USA por defecto
-        val gcDir = File(basePath)
-        val targetRegion = REGIONS.firstOrNull { File(gcDir, "$it/Card A").isDirectory } ?: "USA"
-        val cardDir = File(gcDir, "$targetRegion/Card A")
-        cardDir.mkdirs()
-
-        // Borrar GCIs existentes del mismo game-id
-        cardDir.listFiles()?.filter {
-            it.isFile && it.name.startsWith(gameId, ignoreCase = true)
-                && it.extension.equals("gci", ignoreCase = true)
-        }?.forEach { it.delete() }
-
-        return try {
-            ZipInputStream(FileInputStream(tempFile)).use { zipIn ->
-                var entry = zipIn.nextEntry
-                while (entry != null) {
-                    if (!entry.isDirectory) {
-                        val outFile = File(cardDir, entry.name)
-                        if (outFile.canonicalPath.startsWith(cardDir.canonicalPath)) {
-                            FileOutputStream(outFile).use { out -> zipIn.copyTo(out) }
-                        }
-                    }
-                    zipIn.closeEntry()
-                    entry = zipIn.nextEntry
-                }
-            }
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     // ── Wii ───────────────────────────────────────────────────────────────
 
     private fun findWiiSaves(
@@ -176,13 +127,12 @@ class DolphinSaveHandler : SaveHandler {
         basePath: String,
         results: MutableList<LocalSave>,
     ) {
-        // Wii title IDs: los primeros 4 chars del game-id se mapean al title-id low
         // La estructura es: {basePath}/{high}/{low}/data/ donde basePath = Wii/title
         val wiiTitleDir = File(basePath)
         if (!wiiTitleDir.isDirectory) return
 
         val dataDir = findWiiDataDir(wiiTitleDir, gameId) ?: return
-        if (!dataDir.isDirectory || (dataDir.listFiles()?.isEmpty() != false)) return
+        if (dataDir.listFiles()?.isEmpty() != false) return
 
         // La carpeta de save del juego es {high}/{low} (contiene data/ y, a veces,
         // content/). Se zipea relativa a Wii/title para preservar {high}/{low}/...
@@ -234,14 +184,16 @@ class DolphinSaveHandler : SaveHandler {
     }
 
     /**
-     * Busca la carpeta data/ del título Wii. Recorre la jerarquía title/{high}/{low}/data.
+     * Busca la carpeta data/ del título Wii en title/{high}/{low}/data. Dolphin
+     * names `{low}` after the game code in hex (`RSBE` → `52534245`); a folder
+     * literally containing the game code is accepted too.
      */
     private fun findWiiDataDir(titleDir: File, gameId: String): File? {
-        // Recorrer todas las subcarpetas buscando un match por game-id
-        titleDir.listFiles()?.filter { it.isDirectory }?.forEach { highDir ->
-            highDir.listFiles()?.filter { it.isDirectory }?.forEach { lowDir ->
-                // El nombre del directorio low a veces contiene el game-id
-                if (lowDir.name.contains(gameId.take(4), ignoreCase = true)) {
+        val gameCode = gameId.take(4)
+        val hexLow = gameCode.toByteArray(Charsets.US_ASCII).joinToString("") { "%02x".format(it) }
+        titleDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name }?.forEach { highDir ->
+            highDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name }?.forEach { lowDir ->
+                if (lowDir.name.equals(hexLow, ignoreCase = true) || lowDir.name.contains(gameCode, ignoreCase = true)) {
                     val dataDir = File(lowDir, "data")
                     if (dataDir.isDirectory) return dataDir
                 }
@@ -253,25 +205,12 @@ class DolphinSaveHandler : SaveHandler {
     // ── Utilidades ────────────────────────────────────────────────────────
 
     /**
-     * Extrae el game-id (6 chars como GALE01) del nombre del fichero ROM.
-     * Formatos: "GALE01 - Name.iso", "[GALE01] Name.gcm", "GALE01.iso"
+     * Extrae el game-id (6 chars como GALE01) de un nombre de fichero.
+     * Formatos: "GALE01 - Name.iso", "[GALE01] Name.gcm", "GALE01.iso",
+     * "GALE01_gc_saves.zip".
      */
-    private fun extractGameId(fileName: String): String? {
-        val patterns = listOf(
-            Regex("""\[?([A-Z0-9]{6})\]?"""),
-        )
-        for (pattern in patterns) {
-            val match = pattern.find(fileName)
-            if (match != null) {
-                val candidate = match.groupValues[1]
-                // Validar que parece un game-id: 4 letras + 2 alfanuméricos
-                if (candidate.matches(Regex("[A-Z][A-Z0-9]{3}[A-Z0-9]{2}"))) {
-                    return candidate
-                }
-            }
-        }
-        return null
-    }
+    private fun extractGameId(fileName: String): String? =
+        GAME_ID_IN_NAME.findAll(fileName).map { it.groupValues[1] }.firstOrNull { it.matches(GAME_ID) }
 
     private fun folderLastModified(dir: File): Long {
         var newest = dir.lastModified()
@@ -281,18 +220,129 @@ class DolphinSaveHandler : SaveHandler {
         return newest
     }
 
-    /**
-     * Zipea [folder] almacenando las entradas con su ruta relativa respecto a
-     * [root]. Se usa para Wii, donde el save debe conservar la estructura
-     * `{high}/{low}/data/...` colgando de `Wii/title` para restaurarse bien.
-     */
-
     companion object {
         const val DEFAULT_GC_SAVES_PATH =
             "/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/GC"
         const val DEFAULT_WII_SAVES_PATH =
             "/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/Wii/title"
         val GC_SLUGS = setOf("gc", "gamecube", "ngc")
-        private val REGIONS = listOf("USA", "EUR", "JAP")
+
+        private val GAME_ID_IN_NAME = Regex("""(?<![A-Za-z0-9])([A-Z0-9]{6})(?![A-Za-z0-9])""")
+
+        /** Game code (system letter first) + 2-char maker code. */
+        private val GAME_ID = Regex("[A-Z][A-Z0-9]{3}[A-Z0-9]{2}")
+    }
+}
+
+/**
+ * Dolphin's GameCube "GCI Folder" memory card layout, identical on desktop and
+ * Android:
+ * ```
+ * <GC root>/<USA|EUR|JAP>/Card A/<maker>-<gamecode>-<filename>.gci
+ * ```
+ * e.g. `GC/USA/Card A/01-GAFE-DobutsunoMori.gci` for game id `GAFE01`
+ * (game code `GAFE` + maker `01`). Every GCI also starts with the same 6
+ * bytes (game code, maker), which identifies files renamed by hand.
+ */
+internal object DolphinGciLayout {
+
+    val REGIONS = listOf("USA", "EUR", "JAP")
+    const val CARD_DIR = "Card A"
+
+    private val GCI_NAME = Regex("""^([A-Za-z0-9]{2})-([A-Za-z0-9]{4})-.*\.gci$""", RegexOption.IGNORE_CASE)
+
+    /** Region folder Dolphin uses for a disc: from the region letter (4th char) of its id; null if unknown. */
+    fun regionFor(gameId: String): String? = when (gameId.getOrNull(3)?.uppercaseChar()) {
+        'E' -> "USA"
+        'P' -> "EUR"
+        'J' -> "JAP"
+        else -> null
+    }
+
+    fun cardDir(gcRoot: File, region: String): File = File(gcRoot, "$region/$CARD_DIR")
+
+    /** Whether [file] is a GCI save of [gameId] (game code chars 0-3, maker chars 4-5 when known). */
+    fun matches(file: File, gameId: String): Boolean {
+        if (!file.isFile || !file.extension.equals("gci", ignoreCase = true)) return false
+        val gameCode = gameId.take(4)
+        val maker = gameId.drop(4).take(2).takeIf { it.length == 2 }
+        val (fileMaker, fileCode) = GCI_NAME.matchEntire(file.name)
+            ?.let { it.groupValues[1] to it.groupValues[2] }
+            ?: readHeader(file)
+            ?: return false
+        return fileCode.equals(gameCode, ignoreCase = true) &&
+            (maker == null || fileMaker.equals(maker, ignoreCase = true))
+    }
+
+    /**
+     * GCI files of [gameId], sorted by name, from the first card folder that has
+     * any: the disc's region folder first, then the others.
+     */
+    fun findSaves(gcRoot: File, gameId: String): List<File> {
+        for (region in searchOrder(gameId)) {
+            val found = cardDir(gcRoot, region).listFiles()
+                ?.filter { matches(it, gameId) }
+                ?.sortedBy { it.name }
+                .orEmpty()
+            if (found.isNotEmpty()) return found
+        }
+        return emptyList()
+    }
+
+    /**
+     * Replaces the GCIs of [gameId] with the `.gci` entries of [zip] (flat file
+     * names; folders in entry names are ignored). Target: the card folder that
+     * already holds the game's saves, else the disc's region folder, else the
+     * first existing card folder, else `USA`.
+     */
+    fun restore(zip: File, gcRoot: File, gameId: String): Boolean {
+        val existing = findSaves(gcRoot, gameId)
+        val cardDir = existing.firstOrNull()?.parentFile
+            ?: regionFor(gameId)?.let { cardDir(gcRoot, it) }
+            ?: REGIONS.map { cardDir(gcRoot, it) }.firstOrNull { it.isDirectory }
+            ?: cardDir(gcRoot, REGIONS.first())
+        if (!cardDir.isDirectory && !cardDir.mkdirs()) return false
+
+        return try {
+            // Read the whole archive first so a corrupt download leaves the card untouched.
+            val entries = mutableListOf<Pair<String, ByteArray>>()
+            ZipInputStream(FileInputStream(zip)).use { zipIn ->
+                var entry = zipIn.nextEntry
+                while (entry != null) {
+                    val name = entry.name.substringAfterLast('/')
+                    if (!entry.isDirectory && name.endsWith(".gci", ignoreCase = true)) {
+                        entries += name to zipIn.readBytes()
+                    }
+                    zipIn.closeEntry()
+                    entry = zipIn.nextEntry
+                }
+            }
+            if (entries.isEmpty()) return false
+            existing.forEach { it.delete() }
+            cardDir.listFiles()?.filter { matches(it, gameId) }?.forEach { it.delete() }
+            entries.forEach { (name, bytes) -> File(cardDir, name).writeBytes(bytes) }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun searchOrder(gameId: String): List<String> {
+        val primary = regionFor(gameId) ?: return REGIONS
+        return listOf(primary) + (REGIONS - primary)
+    }
+
+    /** (maker, game code) from the first 6 bytes of a GCI. */
+    private fun readHeader(file: File): Pair<String, String>? = try {
+        if (file.length() < 6) {
+            null
+        } else {
+            val header = ByteArray(6)
+            RandomAccessFile(file, "r").use { it.readFully(header) }
+            val text = String(header, Charsets.US_ASCII)
+            if (text.all { it in 'A'..'Z' || it in '0'..'9' }) text.substring(4, 6) to text.substring(0, 4) else null
+        }
+    } catch (_: Exception) {
+        null
     }
 }

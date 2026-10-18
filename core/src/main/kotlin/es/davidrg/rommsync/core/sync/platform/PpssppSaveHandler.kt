@@ -1,6 +1,5 @@
 package es.davidrg.rommsync.core.sync.platform
 
-import es.davidrg.rommsync.core.util.RomHeaderIdReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -20,8 +19,8 @@ import java.util.zip.ZipInputStream
  * p.ej. `ULUS10064`). Todas las carpetas que comparten el prefijo pertenecen
  * al mismo juego (DATA00, SETTINGS, etc.) y se agrupan en un zip para upload.
  *
- * NOTA: esta versión usa el nombre del ROM como proxy del disc-id (eliminando
- * extensión y tags). En fases futuras se puede extraer el disc-id del ISO.
+ * El disc-id se lee del header del ROM local (PARAM.SFO) y, si no, del
+ * nombre del fichero o (al restaurar) del nombre del asset `<DISCID>_saves.zip`.
  */
 class PpssppSaveHandler : SaveHandler {
 
@@ -36,11 +35,10 @@ class PpssppSaveHandler : SaveHandler {
         val saveDataDir = File(savesBasePath)
         if (!saveDataDir.isDirectory) return@withContext results
 
-        // Intentar buscar por disc-id: primero leyendo el header del ISO si
-        // está disponible, luego desde el nombre del fichero.
-        val discId = romLocalPath?.let { RomHeaderIdReader.readGameId(File(it), platformSlug) }
-            ?: extractDiscIdFromFileName(romFileName)
-        if (discId == null) return@withContext results
+        // Disc id: ROM header first (works for compressed images once the
+        // reader supports them), then the file name.
+        val discId = resolveDiscId(romFileName, platformSlug, romLocalPath)
+            ?: return@withContext results
 
         val matchedFolders = saveDataDir.listFiles()?.filter { dir ->
             dir.isDirectory && dir.name.startsWith(discId, ignoreCase = true)
@@ -72,8 +70,7 @@ class PpssppSaveHandler : SaveHandler {
         romId: Int, romFileName: String, platformSlug: String,
         savesBasePath: String, romLocalPath: String?,
     ): String? = withContext(Dispatchers.IO) {
-        val discId = romLocalPath?.let { RomHeaderIdReader.readGameId(File(it), platformSlug) }
-            ?: extractDiscIdFromFileName(romFileName) ?: return@withContext null
+        val discId = resolveDiscId(romFileName, platformSlug, romLocalPath) ?: return@withContext null
         val matched = File(savesBasePath).listFiles()?.filter {
             it.isDirectory && it.name.startsWith(discId, ignoreCase = true)
         } ?: return@withContext null
@@ -86,11 +83,17 @@ class PpssppSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
+        // SAVEDATA folders are `<DISCID><suffix>` (e.g. `NPUZ00085DATA00`); the
+        // disc id comes from the ROM header, its file name, or the asset name
+        // (`<DISCID>_saves.zip`, as findSaves names uploads).
+        val discId = resolveDiscId(romFileName, platformSlug, romLocalPath)
+            ?: extractDiscIdFromFileName(targetFileName)
+            ?: return@withContext false
+
         val saveDataDir = File(savesBasePath)
         saveDataDir.mkdirs()
-
-        val discId = extractDiscIdFromFileName(romFileName) ?: return@withContext false
 
         // Borrar carpetas existentes del mismo disc-id antes de extraer
         saveDataDir.listFiles()?.filter { dir ->
@@ -126,6 +129,12 @@ class PpssppSaveHandler : SaveHandler {
             false
         }
     }
+
+    /** Disc id without separators (`ULUS10064`), the prefix of every SAVEDATA folder of the game. */
+    private fun resolveDiscId(romFileName: String, platformSlug: String, romLocalPath: String?): String? =
+        resolveRomId(romLocalPath, platformSlug) { extractDiscIdFromFileName(romFileName) }
+            ?.replace("-", "")
+            ?.uppercase()
 
     /**
      * Intenta extraer un disc-id PSP del nombre del ROM.

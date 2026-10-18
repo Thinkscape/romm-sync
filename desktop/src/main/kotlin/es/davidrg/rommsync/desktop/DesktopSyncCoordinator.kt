@@ -674,6 +674,7 @@ class DesktopSyncCoordinator(
                 platformSlug = ctx.rom.platformSlug,
                 savesBasePath = ctx.basePath,
                 targetFileName = localName,
+                romLocalPath = ctx.rom.localPath,
             )
             if (ok) hashStore?.setStateSynced(ctx.rom.romId, localName, sha1, SyncSlots.remoteMarker(remote))
             ok
@@ -741,6 +742,7 @@ class DesktopSyncCoordinator(
                     platformSlug = rom.platformSlug,
                     savesBasePath = ctx.basePath,
                     targetFileName = fileName,
+                    romLocalPath = rom.localPath,
                 )
             }.getOrDefault(false)
         }
@@ -827,6 +829,7 @@ class DesktopSyncCoordinator(
                 platformSlug = ctx.rom.platformSlug,
                 savesBasePath = ctx.basePath,
                 targetFileName = localName,
+                romLocalPath = ctx.rom.localPath,
             )
         } catch (e: Exception) {
             log("sync: download save $saveId (rom ${ctx.rom.romId}) failed: ${describe(e)}")

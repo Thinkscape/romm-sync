@@ -55,7 +55,7 @@ class RomHeaderIdReaderTest {
     }
 
     @Test
-    fun `psp comprimido cso devuelve null`() {
+    fun `psp cso invalido devuelve null`() {
         val f = write("game.cso", pad(4096))
         assertNull(RomHeaderIdReader.readGameId(f, "psp"))
     }
@@ -78,24 +78,24 @@ class RomHeaderIdReaderTest {
         assertNull(RomHeaderIdReader.readGameId(f, "ps2"))
     }
 
-    // ── GameCube: game code en 0x0440 ────────────────────────────────────
+    // ── GameCube: game ID en 0x0000 ──────────────────────────────────────
 
     @Test
-    fun `gamecube extrae game code de 0x0440`() {
+    fun `gamecube extrae game id de 6 caracteres`() {
         val iso = ByteArray(32 * 1024)
-        System.arraycopy("GMSE".toByteArray(Charsets.US_ASCII), 0, iso, 0x0440, 4)
+        System.arraycopy("GMSE01".toByteArray(Charsets.US_ASCII), 0, iso, 0, 6)
         val f = write("game.iso", iso)
 
-        assertEquals("GMSE", RomHeaderIdReader.readGameId(f, "gc"))
+        assertEquals("GMSE01", RomHeaderIdReader.readGameId(f, "gc"))
     }
 
     @Test
     fun `gamecube alias ngc tambien funciona`() {
         val iso = ByteArray(32 * 1024)
-        System.arraycopy("GALE01".toByteArray(Charsets.US_ASCII), 0, iso, 0x0440, 6)
+        System.arraycopy("GALE01".toByteArray(Charsets.US_ASCII), 0, iso, 0, 6)
         val f = write("game.iso", iso)
 
-        assertEquals("GALE", RomHeaderIdReader.readGameId(f, "ngc"))
+        assertEquals("GALE01", RomHeaderIdReader.readGameId(f, "ngc"))
     }
 
     // ── Wii: game code en 0x0000 ─────────────────────────────────────────

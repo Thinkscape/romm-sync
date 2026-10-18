@@ -35,7 +35,8 @@ class CemuSaveHandler : SaveHandler {
         romLocalPath: String?,
     ): List<LocalSave> = withContext(Dispatchers.IO) {
         val results = mutableListOf<LocalSave>()
-        val titleId = extractTitleId(romFileName) ?: return@withContext results
+        val titleId = resolveRomId(romLocalPath, platformSlug) { extractTitleId(romFileName) }
+            ?: return@withContext results
         val titleIdLow = titleId.takeLast(8)
 
         val saveDir = findSaveDir(savesBasePath, titleIdLow) ?: return@withContext results
@@ -67,7 +68,8 @@ class CemuSaveHandler : SaveHandler {
         romId: Int, romFileName: String, platformSlug: String,
         savesBasePath: String, romLocalPath: String?,
     ): String? = withContext(Dispatchers.IO) {
-        val titleId = extractTitleId(romFileName) ?: return@withContext null
+        val titleId = resolveRomId(romLocalPath, platformSlug) { extractTitleId(romFileName) }
+            ?: return@withContext null
         val titleIdLow = titleId.takeLast(8)
         val saveDir = findSaveDir(savesBasePath, titleIdLow) ?: return@withContext null
         folderFingerprint(saveDir)
@@ -79,8 +81,12 @@ class CemuSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
-        val titleId = extractTitleId(romFileName) ?: return@withContext false
+        // Asset name fallback: uploads are named `<titleId>_wiiu_save.zip`.
+        val titleId = resolveRomId(romLocalPath, platformSlug) { extractTitleId(romFileName) }
+            ?: extractTitleId(targetFileName)
+            ?: return@withContext false
         val titleIdLow = titleId.takeLast(8)
 
         val saveDir = findSaveDir(savesBasePath, titleIdLow)

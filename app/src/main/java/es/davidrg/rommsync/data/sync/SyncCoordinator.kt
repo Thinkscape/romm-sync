@@ -88,7 +88,7 @@ class SyncCoordinator(
         val rawBasePath: String,
     ) {
         val basePath: String get() = stageFor(rawBasePath)
-        val ref get() = SaveTransfer.RomRef(rom.romId, rom.fileName, rom.platformSlug)
+        val ref get() = SaveTransfer.RomRef(rom.romId, rom.fileName, rom.platformSlug, rom.localPath)
         private var scanned: List<LocalSave>? = null
 
         /** Local saves and states (scanned once per run, on demand). */
@@ -712,6 +712,7 @@ class SyncCoordinator(
                     platformSlug = rom.platformSlug,
                     savesBasePath = staged.dir.path,
                     targetFileName = fileName,
+                    romLocalPath = rom.localPath,
                 )
             }.getOrDefault(false)
             if (ok) SavePathAccess.commit(staged, appContext)

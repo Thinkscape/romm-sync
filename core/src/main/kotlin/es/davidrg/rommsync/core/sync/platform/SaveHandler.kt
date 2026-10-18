@@ -1,6 +1,17 @@
 package es.davidrg.rommsync.core.sync.platform
 
+import es.davidrg.rommsync.core.util.RomHeaderIdReader
 import java.io.File
+
+/**
+ * Game id for a ROM: read from the local file's header when [romLocalPath] is
+ * known (RomM file names usually carry no id), else parsed from the file name.
+ */
+internal inline fun resolveRomId(
+    romLocalPath: String?,
+    platformSlug: String,
+    fromFileName: () -> String?,
+): String? = romLocalPath?.let { RomHeaderIdReader.readGameId(File(it), platformSlug) } ?: fromFileName()
 
 /**
  * Whether a local file is an in-game save (uploaded to `POST /api/saves`) or an
@@ -82,6 +93,9 @@ interface SaveHandler {
      * @param platformSlug Slug de la plataforma.
      * @param savesBasePath Ruta base de saves.
      * @param targetFileName Nombre del fichero destino (proporcionado por el servidor).
+     * @param romLocalPath Local ROM path, when known. ID-based handlers read the
+     *   game id from its header first (RomM file names usually carry no id) and
+     *   fall back to [romFileName].
      * @return true si se extrajo correctamente.
      */
     suspend fun extractDownload(
@@ -90,6 +104,7 @@ interface SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String? = null,
     ): Boolean
 
     /**

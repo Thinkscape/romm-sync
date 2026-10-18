@@ -140,6 +140,7 @@ class AndroidSaveHandler : SaveHandler {
         platformSlug: String,
         savesBasePath: String,
         targetFileName: String,
+        romLocalPath: String?,
     ): Boolean = withContext(Dispatchers.IO) {
         if (targetFileName.endsWith(".tar")) {
             extractRootTar(tempFile, savesBasePath)

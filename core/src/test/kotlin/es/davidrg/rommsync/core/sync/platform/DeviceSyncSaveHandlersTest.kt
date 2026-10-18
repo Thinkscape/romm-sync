@@ -221,7 +221,8 @@ class DeviceSyncSaveHandlersTest {
 
     @Test
     fun `profiles resolve handler base paths`() {
-        val deck = SavePaths.emudeck("/e/saves")
+        // A home without the Dolphin flatpak keeps EmuDeck's dolphin/{GC,Wii} folders.
+        val deck = SavePaths.emudeck("/e/saves", home = tmp.newFolder("home").path)
         assertEquals("/e/saves/retroarch", deck.handlerBasePath("retroarch", "snes"))
         assertEquals("/e/saves/dolphin/GC", deck.handlerBasePath("dolphin", "ngc"))
         assertEquals("/e/saves/dolphin/Wii/title", deck.handlerBasePath("dolphin", "wii"))
