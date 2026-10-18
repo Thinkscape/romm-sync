@@ -142,6 +142,14 @@ object DesktopConfig {
     /** [esdeTarget] when export on install is enabled (the daemon's push installs). */
     fun esdeInstallTarget(): EsdeTarget? = if (esdeMediaOnInstall) esdeTarget() else null
 
+    /**
+     * Restart a running, idle ES-DE after push installs so new games show up without a
+     * manual rescan (daemon; see [LauncherRefresher]). Never interrupts a running game.
+     */
+    var launcherRefreshOnInstall: Boolean
+        get() = prefs.getBoolean(KEY_LAUNCHER_REFRESH, true)
+        set(v) = prefs.putBoolean(KEY_LAUNCHER_REFRESH, v)
+
     /** Minutos entre sincronizaciones automáticas de saves (0 = desactivado). */
     var autoSyncMinutes: Int
         get() = prefs.getInt("auto_sync_minutes", 0)
@@ -186,6 +194,7 @@ object DesktopConfig {
     private const val KEY_PAIRED_NAME = "paired.device_name"
     private const val KEY_PAIRED_URL = "paired.base_url"
     private const val KEY_ESDE_MEDIA_ON_INSTALL = "esde.media_on_install"
+    private const val KEY_LAUNCHER_REFRESH = "launcher.refresh_on_install"
 
     private fun esdeSettingRegex(name: String) = Regex("""<string\s+name="$name"\s+value="([^"]*)"\s*/>""")
 

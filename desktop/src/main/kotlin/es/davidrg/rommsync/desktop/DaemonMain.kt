@@ -50,6 +50,15 @@ object DaemonMain {
         )
 
         val syncTriggers = Channel<String>(Channel.CONFLATED)
+        val launcherRefresh = LauncherRefreshScheduler(
+            refresher = LauncherRefresher(LinuxProcessSystem()),
+            // Re-read per batch: the toggle may be changed without restarting the daemon.
+            enabled = {
+                config.sync()
+                config.launcherRefreshOnInstall
+            },
+            log = ::log,
+        )
         val installClient = InstallClient(
             baseUrl = config.pairedBaseUrl,
             token = config.pairedToken,
@@ -58,10 +67,21 @@ object DaemonMain {
             downloadsAllowed = { true },
             store = DesktopInstalledRomStore(library),
             listener = object : InstallListener {
+                // Fresh installs whose ES-DE gamelist/media export is still queued: ES-DE is
+                // refreshed once the entry is written, so the restart shows title and media.
+                private val awaitingExport = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
                 override fun onInstallFinished(requestId: String, romId: Int, status: String, reason: String?, files: List<File>) {
                     log("install $requestId rom $romId -> $status${reason?.let { " ($it)" } ?: ""}")
                     // A new game may already have saves in RomM from the other device.
                     if (status != InstallClient.STATUS_FAILED) syncTriggers.trySend("install")
+                    // Only a fresh install adds files ES-DE has not scanned yet.
+                    if (status != InstallClient.STATUS_DONE) return
+                    if (config.esdeInstallTarget() != null) awaitingExport += requestId else launcherRefresh.installFinished()
+                }
+
+                override fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {
+                    if (awaitingExport.remove(requestId)) launcherRefresh.installFinished()
                 }
             },
             logger = ::log,
@@ -79,6 +99,10 @@ object DaemonMain {
             else -> config.esdeTarget()?.let { log("media: ES-DE gamelists in ${it.esdeDir}, media in ${it.mediaDir}") }
                 ?: log("media: no ES-DE folder at ${config.esdeDataDir}; export on install off")
         }
+        log(
+            if (config.launcherRefreshOnInstall) "launcher: ES-DE refresh after installs on (restarts ES-DE only when idle)"
+            else "launcher: ES-DE refresh after installs off (launcher.refresh_on_install=false)",
+        )
 
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         Runtime.getRuntime().addShutdownHook(
@@ -94,6 +118,7 @@ object DaemonMain {
         }.onFailure { log("SIGUSR1 trigger unavailable: ${it.message}") }
 
         installClient.start()
+        launcherRefresh.start(scope)
         scope.launch {
             while (isActive) {
                 syncTriggers.trySend("timer")
