@@ -143,19 +143,26 @@ class SaveSyncManager(
                     // estado leyendo el texto del mensaje (es traducible).
                     val allSynced = info.outputData.getBoolean(SaveSyncWorker.KEY_ALL_SYNCED, false)
                     val hasWarnings = info.outputData.getBoolean(SaveSyncWorker.KEY_HAS_WARNINGS, false)
-                    val conflictsJson = info.outputData.getString(SaveSyncWorker.KEY_CONFLICTS_JSON)
-                    if (conflictsJson != null) {
+                    // The worker's conflict/failure lists are copied into settings once per
+                    // run: re-emissions of the same finished work (screen reopened, app
+                    // restarted) must not bring back conflicts the user already resolved.
+                    val resultsPrefs = context.getSharedPreferences(RESULT_PREFS, Context.MODE_PRIVATE)
+                    if (resultsPrefs.getString(KEY_APPLIED_WORK_ID, null) != info.id.toString()) {
+                        val conflictsJson = info.outputData.getString(SaveSyncWorker.KEY_CONFLICTS_JSON)
+                        val failedJson = info.outputData.getString(SaveSyncWorker.KEY_FAILED_JSON)
                         kotlinx.coroutines.runBlocking {
-                            SettingsDataStore(context).setLastSyncConflictsJson(conflictsJson)
+                            val store = SettingsDataStore(context)
+                            if (conflictsJson != null) store.setLastSyncConflictsJson(conflictsJson)
+                            if (failedJson != null) store.setLastSyncFailedJson(failedJson)
                         }
+                        resultsPrefs.edit().putString(KEY_APPLIED_WORK_ID, info.id.toString()).apply()
                     }
-                    val failedJson = info.outputData.getString(SaveSyncWorker.KEY_FAILED_JSON)
-                    if (failedJson != null) {
-                        kotlinx.coroutines.runBlocking {
-                            SettingsDataStore(context).setLastSyncFailedJson(failedJson)
-                        }
-                    }
-                    SyncState.Success(message, allSynced = allSynced, hasWarnings = hasWarnings)
+                    SyncState.Success(
+                        message,
+                        allSynced = allSynced,
+                        hasWarnings = hasWarnings,
+                        conflicts = info.outputData.getInt(SaveSyncWorker.KEY_CONFLICTS, 0),
+                    )
                 }
                 WorkInfo.State.FAILED -> {
                     val message = info.outputData.getString(SaveSyncWorker.KEY_MESSAGE) ?: tr("common.error")
@@ -169,6 +176,8 @@ class SaveSyncManager(
 
     companion object {
         private const val PERIODIC_WORK_NAME = "save_sync_periodic"
+        private const val RESULT_PREFS = "save_sync_results"
+        private const val KEY_APPLIED_WORK_ID = "applied_work_id"
     }
 
     /**
@@ -192,6 +201,8 @@ sealed class SyncState {
         val allSynced: Boolean = false,
         /** El resultado trae avisos (p.ej. rutas de saves ilegibles). */
         val hasWarnings: Boolean = false,
+        /** Conflicts the run left for the user to resolve. */
+        val conflicts: Int = 0,
     ) : SyncState()
     data class Failed(val message: String) : SyncState()
 }

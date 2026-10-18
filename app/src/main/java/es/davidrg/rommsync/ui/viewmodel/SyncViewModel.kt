@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -64,8 +65,39 @@ class SyncViewModel(
     val retroArchBasePath: StateFlow<String> = settingsRepository.retroArchBasePath
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsDataStore.DEFAULT_RETROARCH_PATH)
 
-    val syncState: StateFlow<SyncState> = saveSyncManager.observeSyncState()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SyncState.Idle)
+    /**
+     * Last run's state. A run that left conflicts shows "conflicts resolved" once
+     * the persisted conflict list is empty (all resolved), instead of its stale
+     * "N conflicts" message.
+     */
+    val syncState: StateFlow<SyncState> = combine(
+        saveSyncManager.observeSyncState(),
+        settingsRepository.lastSyncConflictsJson,
+    ) { state, conflictsJson ->
+        if (state is SyncState.Success && state.conflicts > 0 && parseConflictsJson(conflictsJson).isEmpty()) {
+            state.copy(message = tr("android.sync.result.conflicts_resolved"), conflicts = 0)
+        } else {
+            state
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SyncState.Idle)
+
+    /** RetroArch folder save sync actually uses, and whether it comes from the SD-card profile default. */
+    data class EffectiveRetroArchPath(val path: String, val fromProfile: Boolean)
+
+    val effectiveRetroArchPath: StateFlow<EffectiveRetroArchPath?> = combine(
+        settingsRepository.retroArchBasePath,
+        settingsRepository.settings,
+    ) { base, config ->
+        val profile = SavePathResolver.deviceProfile(config.romsRootPath)
+        val path = SavePathResolver.platformBasePath(
+            platformSlug = "snes",
+            emulatorId = SaveHandlerRegistry.EmulatorId.RETROARCH.id,
+            savesPathOverride = null,
+            retroArchBase = base,
+            profile = profile,
+        )
+        EffectiveRetroArchPath(path, fromProfile = profile != null && path != base)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val lastSyncTimestamp: StateFlow<Long> = settingsRepository.lastSyncTimestamp
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
@@ -138,6 +170,10 @@ class SyncViewModel(
                 it.romId == romId && it.fileName == fileName
             }
             settingsRepository.setLastSyncConflicts(serializeConflicts(_conflicts.value))
+            if (_conflicts.value.isEmpty()) {
+                // syncState switches to the "resolved" message from the emptied list; keep the stored summary in step.
+                settingsRepository.setLastSync(System.currentTimeMillis(), tr("android.sync.result.conflicts_resolved"))
+            }
             scanLocalSaves()
         }
     }

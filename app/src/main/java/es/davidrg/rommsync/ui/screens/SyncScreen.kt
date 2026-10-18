@@ -103,6 +103,7 @@ fun SyncScreen() {
     val lastTimestamp by viewModel.lastSyncTimestamp.collectAsState()
     val lastSummary by viewModel.lastSyncSummary.collectAsState()
     val retroArchBasePath by viewModel.retroArchBasePath.collectAsState()
+    val effectiveRetroArch by viewModel.effectiveRetroArchPath.collectAsState()
     val syncInterval by viewModel.syncIntervalMinutes.collectAsState()
     val localSaves by viewModel.localSaves.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
@@ -114,14 +115,15 @@ fun SyncScreen() {
     val saveAccess by viewModel.saveAccess.collectAsState()
 
     var retroArchPath by remember { mutableStateOf("") }
+    // Until the user edits the field it mirrors the path sync actually uses.
+    var retroArchEdited by remember { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
     // Save folder being granted through the folder picker (SAF), null = none.
     var grantPath by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(retroArchBasePath) {
-        if (retroArchPath.isEmpty() && retroArchBasePath.isNotEmpty()) {
-            retroArchPath = retroArchBasePath
-        }
+    LaunchedEffect(effectiveRetroArch) {
+        val effective = effectiveRetroArch ?: return@LaunchedEffect
+        if (!retroArchEdited) retroArchPath = effective.path
     }
 
     // Persistir resultado cuando el sync termina
@@ -228,6 +230,7 @@ fun SyncScreen() {
                         value = retroArchPath,
                         onValueChange = {
                             retroArchPath = it
+                            retroArchEdited = true
                             viewModel.setRetroArchBasePath(it)
                         },
                         label = { Text(tr("android.sync.retroarch_base.label")) },
@@ -250,6 +253,20 @@ fun SyncScreen() {
                         Text(tr("common.select_folder"))
                     }
                     Spacer(modifier = Modifier.height(8.dp))
+                    effectiveRetroArch?.let { effective ->
+                        Text(
+                            if (effective.fromProfile) {
+                                tr("android.sync.retroarch_base.from_sd_profile")
+                            } else if (retroArchBasePath != SettingsDataStore.DEFAULT_RETROARCH_PATH) {
+                                tr("android.sync.retroarch_base.user_override")
+                            } else {
+                                tr("android.sync.retroarch_base.default")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                     Text(
                         tr("android.sync.retroarch_base.hint"),
                         style = MaterialTheme.typography.bodySmall,
@@ -485,13 +502,14 @@ fun SyncScreen() {
     // Folder picker dialog
     if (showFolderPicker) {
         FolderPickerDialog(
-            initialPath = retroArchBasePath.ifBlank {
+            initialPath = retroArchPath.ifBlank {
                 SettingsDataStore.DEFAULT_RETROARCH_PATH
             },
             onDismiss = { showFolderPicker = false },
             onSelect = { path ->
                 viewModel.setRetroArchBasePath(path)
                 retroArchPath = path
+                retroArchEdited = true
                 showFolderPicker = false
             },
         )
