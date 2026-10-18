@@ -55,10 +55,9 @@ class Ps2SaveHandler : SaveHandler {
         if (serial == null) return@withContext results
         val baSerial = toBaFolderName(serial)
 
-        // Buscar en todas las memory cards (.ps2 dirs)
-        val cardDirs = memcardsDir.listFiles()?.filter {
-            it.isDirectory && it.name.endsWith(".ps2", ignoreCase = true)
-        } ?: return@withContext results
+        // Buscar en todas las memory cards de carpeta (configured slot 1 first)
+        val cardDirs = folderCards(memcardsDir)
+        if (cardDirs.isEmpty()) return@withContext results
 
         for (cardDir in cardDirs) {
             val saveFolder = cardDir.listFiles()?.firstOrNull { dir ->
@@ -92,9 +91,7 @@ class Ps2SaveHandler : SaveHandler {
     ): String? = withContext(Dispatchers.IO) {
         val serial = romLocalPath?.let { RomHeaderIdReader.readGameId(File(it), platformSlug) }
             ?: extractSerialFromFileName(romFileName) ?: return@withContext null
-        val cardDirs = File(savesBasePath).listFiles()?.filter {
-            it.isDirectory && it.name.endsWith(".ps2", ignoreCase = true)
-        }
+        val cardDirs = File(savesBasePath).takeIf { it.listFiles() != null }?.let(::folderCards)
         if (cardDirs == null) {
             // Ruta inaccesible (Android 13+): fingerprint vía root si existe.
             if (!RootShell.available) return@withContext null
@@ -146,16 +143,12 @@ class Ps2SaveHandler : SaveHandler {
 
         val baSerial = toBaFolderName(serial)
 
-        // Encontrar o crear una memory card
-        val cardDirs = memcardsDir.listFiles()?.filter {
-            it.isDirectory && it.name.endsWith(".ps2", ignoreCase = true)
-        } ?: emptyList()
-
-        val targetCard = if (cardDirs.isEmpty()) {
-            File(memcardsDir, "Shared.ps2").also { it.mkdirs() }
-        } else {
-            cardDirs[0]
-        }
+        // Restore over the card that already holds this game, else the configured
+        // slot-1 card, else the first folder card; create one only if none exists.
+        val cardDirs = folderCards(memcardsDir)
+        val targetCard = cardDirs.firstOrNull { card ->
+            card.listFiles()?.any { it.isDirectory && matchesFolderName(it.name, serial) } == true
+        } ?: cardDirs.firstOrNull() ?: File(memcardsDir, "Shared.ps2").also { it.mkdirs() }
 
         // Borrar carpeta existente del serial
         targetCard.listFiles()?.filter { dir ->
@@ -187,6 +180,43 @@ class Ps2SaveHandler : SaveHandler {
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * Folder memory cards directly under [memcardsDir]: directories named
+     * `*.ps2` (PCSX2/AetherSX2 `Mcd001.ps2`), holding PCSX2's
+     * `_pcsx2_superblock`, or holding `BA<serial>` game folders (ARMSX2's
+     * `MemoryCard`). The card configured as slot 1 in the emulator's
+     * `inis/PCSX2.ini` (sibling of [memcardsDir]) comes first.
+     */
+    internal fun folderCards(memcardsDir: File): List<File> {
+        val cards = memcardsDir.listFiles()?.filter { dir ->
+            dir.isDirectory && (
+                dir.name.endsWith(".ps2", ignoreCase = true) ||
+                    File(dir, "_pcsx2_superblock").isFile ||
+                    dir.listFiles()?.any { it.isDirectory && BA_FOLDER.matches(it.name) } == true
+                )
+        }.orEmpty().sortedBy { it.name }
+        val slot1 = configuredSlot1(memcardsDir) ?: return cards
+        return cards.sortedByDescending { it.name.equals(slot1, ignoreCase = true) }
+    }
+
+    /** `[MemoryCards] Slot1_Filename` from `<memcards>/../inis/PCSX2.ini`, if readable. */
+    private fun configuredSlot1(memcardsDir: File): String? {
+        val ini = File(memcardsDir.parentFile ?: return null, "inis/PCSX2.ini")
+        if (!ini.isFile) return null
+        var inSection = false
+        return runCatching {
+            ini.readLines().firstNotNullOfOrNull { raw ->
+                val line = raw.trim()
+                when {
+                    line.startsWith("[") -> { inSection = line.equals("[MemoryCards]", ignoreCase = true); null }
+                    inSection && line.substringBefore('=').trim().equals("Slot1_Filename", ignoreCase = true) ->
+                        line.substringAfter('=').trim().takeIf { it.isNotEmpty() }
+                    else -> null
+                }
+            }
+        }.getOrNull()
     }
 
     /**
@@ -383,6 +413,9 @@ class Ps2SaveHandler : SaveHandler {
 
 
     companion object {
+        /** PCSX2 folder-card game folder: `BA` + region + serial (`BASLUS-21711`, `BESCES-50001`…). */
+        private val BA_FOLDER = Regex("""B[A-Z][A-Z]{4}-?\d{5}.*""")
+
         const val DEFAULT_SAVES_PATH = "/storage/emulated/0/Android/data/xyz.aethersx2.android/files/memcards"
 
         /**

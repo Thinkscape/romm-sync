@@ -115,7 +115,9 @@ class SyncSlotContractTest {
         assertThat(path("ngc", null)).isEqualTo("/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/GC")
         assertThat(path("switch", null))
             .isEqualTo("/storage/emulated/0/Android/data/dev.eden.eden_emulator/files/nand/user/save")
-        assertThat(path("ps2", null)).isEqualTo("/storage/emulated/0/Android/data/xyz.aethersx2.android/files/memcards")
+        assertThat(path("ps2", null)).isEqualTo("/storage/EBD7-FF2C/ARMSX2/memcards")
+        assertThat(path("ps2", "aethersx2"))
+            .isEqualTo("/storage/emulated/0/Android/data/xyz.aethersx2.android/files/memcards")
         assertThat(path("psp", null, override = "/storage/EBD7-FF2C/custom")).isEqualTo("/storage/EBD7-FF2C/custom")
     }
 

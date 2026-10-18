@@ -112,7 +112,9 @@ object SaveHandlerRegistry {
                 "ps2" -> return EmulatorId.PCSX2
                 "ps3" -> return EmulatorId.RPCS3
             }
-            SaveHost.ANDROID, null -> Unit
+            // The Thor runs PS2 in ARMSX2 (data dir on the SD card).
+            SaveHost.ANDROID -> if (slug == "ps2") return EmulatorId.ARMSX2
+            null -> Unit
         }
         return when (slug) {
             "nds", "ds" -> EmulatorId.MELONDS

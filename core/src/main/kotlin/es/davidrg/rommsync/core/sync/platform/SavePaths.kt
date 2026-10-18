@@ -116,7 +116,8 @@ object SavePaths {
      * Thor with `adb ls`:
      * - emulators whose data folder was chosen on the card keep it there:
      *   RetroArch `RetroArch/`, melonDS `melonDS/`, PPSSPP memstick `PPSSPP/`,
-     *   Azahar user dir `Azahar/`, Vita3K `Vita3K/`, DuckStation `duckstation/`;
+     *   Azahar user dir `Azahar/`, Vita3K `Vita3K/`, DuckStation `duckstation/`,
+     *   ARMSX2 (the PS2 default) `ARMSX2/` with folder cards in `memcards/`;
      * - Dolphin, Eden and NetherSX2 keep their app-specific
      *   `Android/data/<pkg>/files` tree on internal storage [internalRoot]
      *   (unreadable on Android 13 without root).
@@ -134,6 +135,7 @@ object SavePaths {
                     internal("Android/data/xyz.aethersx2.android/files/memcards"),
                     internal("Android/data/xyz.aethersx2.android/files/sstates"),
                 ),
+                EmulatorId.ARMSX2.id to EmulatorPaths(sd("ARMSX2/memcards"), sd("ARMSX2/sstates")),
                 EmulatorId.MELONDS.id to EmulatorPaths(sd("melonDS/saves"), sd("melonDS/states")),
                 EmulatorId.PPSSPP.id to EmulatorPaths(sd("PPSSPP/PSP/SAVEDATA"), sd("PPSSPP/PSP/PPSSPP_STATE")),
                 EmulatorId.DOLPHIN.id to EmulatorPaths(internal("Android/data/org.dolphinemu.dolphinemu/files/GC")),

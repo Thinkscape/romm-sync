@@ -244,6 +244,49 @@ class DeviceSyncSaveHandlersTest {
     }
 
     @Test
+    fun `thor profile defaults ps2 to ARMSX2 on the SD card`() {
+        val thor = SavePaths.android("/storage/EBD7-FF2C")
+        assertEquals(SaveHandlerRegistry.EmulatorId.ARMSX2, SaveHandlerRegistry.getDefaultEmulator("ps2", thor))
+        assertEquals(
+            "/storage/EBD7-FF2C/ARMSX2/memcards",
+            SaveHandlerRegistry.getDefaultSavesPath("armsx2", "ps2", "/unused", thor),
+        )
+        assertTrue(SaveHandlerRegistry.getHandler("ps2", null, thor) is Ps2SaveHandler)
+        assertTrue(SaveHandlerRegistry.EmulatorId.AETHERSX2 in SaveHandlerRegistry.getAvailableEmulators("ps2"))
+    }
+
+    @Test
+    fun `ps2 finds and restores games in ARMSX2 MemoryCard folder card`() = runTest {
+        val memcards = tmp.newFolder("ARMSX2", "memcards")
+        write(memcards, "MemoryCard/BASLUS-21711/icon.sys", "icon")
+        write(memcards, "Other/readme.txt", "not a card")
+        val handler = Ps2SaveHandler()
+
+        val saves = handler.findSaves(9, "SLUS-21711 - Game.iso", "ps2", memcards.path)
+        assertEquals(listOf("BASLUS-21711_save.zip"), saves.map { it.fileName })
+
+        // Restore of another game lands in the same folder card, not a new Shared.ps2.
+        val archive = File(tmp.root, "dl.zip").also { f ->
+            ZipOutputStream(f.outputStream()).use { z ->
+                z.putNextEntry(ZipEntry("BASLUS-20032/save.bin")); z.write("data".toByteArray()); z.closeEntry()
+            }
+        }
+        assertTrue(handler.extractDownload(archive, "SLUS-20032 - Other.iso", "ps2", memcards.path, "BASLUS20032_save.zip"))
+        assertEquals("data", File(memcards, "MemoryCard/BASLUS-20032/save.bin").readText())
+        assertFalse(File(memcards, "Shared.ps2").exists())
+    }
+
+    @Test
+    fun `ps2 prefers the slot 1 card configured in PCSX2 ini`() {
+        val root = tmp.newFolder("emu")
+        val memcards = File(root, "memcards")
+        write(memcards, "Mcd001.ps2/_pcsx2_superblock", "")
+        write(memcards, "Mcd002.ps2/_pcsx2_superblock", "")
+        write(root, "inis/PCSX2.ini", "[EmuCore]\nx=1\n[MemoryCards]\nSlot1_Enable = true\nSlot1_Filename = Mcd002.ps2\n")
+        assertEquals(listOf("Mcd002.ps2", "Mcd001.ps2"), Ps2SaveHandler().folderCards(memcards).map { it.name })
+    }
+
+    @Test
     fun `ps3 handler accepts EmuDeck savedata symlink target as base`() = runTest {
         val savedata = tmp.newFolder("dev_hdd0", "home", "00000001", "savedata")
         write(savedata, "BCES00052_SAVE_1/GAME.SAV", "save")
