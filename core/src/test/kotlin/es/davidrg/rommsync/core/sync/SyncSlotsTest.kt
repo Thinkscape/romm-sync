@@ -150,4 +150,33 @@ class SyncSlotsTest {
         ).single()
         assertEquals(StateAction.NOOP, op.action)
     }
+
+    @Test
+    fun `negotiated download is guarded by the local baseline`() {
+        val srm = local("Zelda.srm", sha1 = "local-now")
+        val romm = { _: LocalSave -> "romm-local" }
+
+        // Changed here since the last sync while another device uploaded: conflict, file untouched.
+        assertEquals(
+            SyncSlots.DownloadGuard.CONFLICT,
+            SyncSlots.guardDownload(srm, lastSyncedLocalHash = "local-before", serverContentHash = "romm-server", contentHashOf = romm),
+        )
+        // Never synced and different from the server: conflict too.
+        assertEquals(
+            SyncSlots.DownloadGuard.CONFLICT,
+            SyncSlots.guardDownload(srm, lastSyncedLocalHash = null, serverContentHash = "romm-server", contentHashOf = romm),
+        )
+        // Unchanged since the last sync: take the server copy.
+        assertEquals(
+            SyncSlots.DownloadGuard.DOWNLOAD,
+            SyncSlots.guardDownload(srm, lastSyncedLocalHash = "local-now", serverContentHash = "romm-server", contentHashOf = romm),
+        )
+        // Same content as the server: nothing to do.
+        assertEquals(
+            SyncSlots.DownloadGuard.NOOP,
+            SyncSlots.guardDownload(srm, lastSyncedLocalHash = "local-before", serverContentHash = "ROMM-LOCAL", contentHashOf = romm),
+        )
+        // No local file: download.
+        assertEquals(SyncSlots.DownloadGuard.DOWNLOAD, SyncSlots.guardDownload(null, null, "romm-server", romm))
+    }
 }

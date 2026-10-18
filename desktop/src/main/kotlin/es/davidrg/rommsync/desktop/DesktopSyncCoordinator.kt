@@ -174,17 +174,27 @@ class DesktopSyncCoordinator(
             unsealedRomIds += romId
             failures += FailedOpInfo(romId, romName(romId), fileName, action, reason)
         }
-        fun conflict(op: SyncOperation) {
+        fun conflict(op: SyncOperation, reason: String? = op.reason) {
             unsealedRomIds += op.romId
             conflicts += ConflictInfo(
                 romId = op.romId,
                 romName = romName(op.romId),
                 fileName = SyncSlots.localNameFor(op.fileName, op.slot),
                 serverUpdatedAt = op.serverUpdatedAt,
-                reason = op.reason,
+                reason = reason,
                 saveId = op.saveId,
             )
-            log("sync: conflict ${op.fileName} (rom ${op.romId}): ${op.reason ?: "both sides changed"}; skipped")
+            log("sync: conflict ${op.fileName} (rom ${op.romId}): ${reason ?: "both sides changed"}; skipped")
+        }
+        // Local saves of roms skipped by the fingerprint shortcut, scanned only when a download needs them.
+        val guardScans = mutableMapOf<Int, List<LocalSave>>()
+        suspend fun localsFor(ctx: RomContext): List<LocalSave> =
+            localSavesMap[ctx.rom.romId] ?: guardScans.getOrPut(ctx.rom.romId) { findSaves(ctx) }
+        /** Records the slot's current local sha1 as the synced baseline (re-scanned after a download). */
+        suspend fun recordSynced(ctx: RomContext, name: String, rescan: Boolean) {
+            val saves = if (rescan) findSaves(ctx).also { guardScans[ctx.rom.romId] = it } else localsFor(ctx)
+            saves.find { it.fileName == name && it.kind == SaveKind.SAVE }
+                ?.let { hashStore?.setSaveSynced(ctx.rom.romId, name, it.sha1) }
         }
 
         for (response in responses) {
@@ -202,7 +212,10 @@ class DesktopSyncCoordinator(
                             continue
                         }
                         when (executeUpload(session, save, ctx, overwrite = false)) {
-                            UploadOutcome.OK -> { completed++; sessionCompleted++; uploaded++ }
+                            UploadOutcome.OK -> {
+                                completed++; sessionCompleted++; uploaded++
+                                hashStore?.setSaveSynced(op.romId, save.fileName, save.sha1)
+                            }
                             UploadOutcome.CONFLICT -> conflict(op)
                             UploadOutcome.FAILED -> {
                                 fail(op.romId, localName, tr("sync.failed.action.upload"), tr("sync.failed.upload_failed"))
@@ -217,9 +230,45 @@ class DesktopSyncCoordinator(
                             sessionFailed++
                             continue
                         }
-                        backupLocalSave(op.romId, localName, localSavesMap[op.romId])
+                        // RomM may answer `download` although this device changed the save too
+                        // (another device's upload has no baseline for us): our own record decides.
+                        val local = SyncSlots.localSaveFor(op, localsFor(ctx))
+                        val guard = SyncSlots.guardDownload(
+                            local,
+                            local?.let { hashStore?.getSaveLocalHash(op.romId, it.fileName) },
+                            op.serverContentHash,
+                        )
+                        if (guard == SyncSlots.DownloadGuard.NOOP) {
+                            local?.let { hashStore?.setSaveSynced(op.romId, it.fileName, it.sha1) }
+                            continue
+                        }
+                        if (guard == SyncSlots.DownloadGuard.CONFLICT) {
+                            val reason = tr("sync.conflict.both_changed")
+                            when (conflictPolicy) {
+                                ConflictPolicy.PREFER_LOCAL ->
+                                    if (local != null && executeUpload(session, local, ctx, overwrite = true) == UploadOutcome.OK) {
+                                        completed++; sessionCompleted++; uploaded++; autoResolvedConflicts++
+                                        hashStore?.setSaveSynced(op.romId, local.fileName, local.sha1)
+                                    } else {
+                                        conflict(op, reason)
+                                    }
+                                ConflictPolicy.PREFER_SERVER -> {
+                                    backupLocalSave(op.romId, localName, localsFor(ctx))
+                                    if (executeDownload(session, saveId, ctx, localName)) {
+                                        completed++; sessionCompleted++; downloaded++; autoResolvedConflicts++
+                                        recordSynced(ctx, localName, rescan = true)
+                                    } else {
+                                        conflict(op, reason)
+                                    }
+                                }
+                                ConflictPolicy.ASK -> conflict(op, reason)
+                            }
+                            continue
+                        }
+                        backupLocalSave(op.romId, localName, localsFor(ctx))
                         if (executeDownload(session, saveId, ctx, localName)) {
                             completed++; sessionCompleted++; downloaded++
+                            recordSynced(ctx, localName, rescan = true)
                         } else {
                             fail(op.romId, localName, tr("sync.failed.action.download"), tr("sync.failed.download_failed"))
                             sessionFailed++
@@ -244,6 +293,7 @@ class DesktopSyncCoordinator(
                                     executeUpload(session, save, ctx, overwrite = true) == UploadOutcome.OK
                                 ) {
                                     completed++; sessionCompleted++; uploaded++; autoResolvedConflicts++
+                                    hashStore?.setSaveSynced(op.romId, save.fileName, save.sha1)
                                 } else {
                                     conflict(op)
                                 }
@@ -251,9 +301,10 @@ class DesktopSyncCoordinator(
                             ConflictPolicy.PREFER_SERVER -> {
                                 val saveId = op.saveId
                                 if (ctx != null && saveId != null) {
-                                    backupLocalSave(op.romId, localName, localSavesMap[op.romId])
+                                    backupLocalSave(op.romId, localName, localsFor(ctx))
                                     if (executeDownload(session, saveId, ctx, localName)) {
                                         completed++; sessionCompleted++; downloaded++; autoResolvedConflicts++
+                                        recordSynced(ctx, localName, rescan = true)
                                     } else {
                                         conflict(op)
                                     }
@@ -263,6 +314,10 @@ class DesktopSyncCoordinator(
                             }
                             ConflictPolicy.ASK -> conflict(op)
                         }
+                    }
+                    "no_op" -> if (ctx != null) {
+                        SyncSlots.localSaveFor(op, localSavesMap[op.romId])
+                            ?.let { hashStore?.setSaveSynced(op.romId, it.fileName, it.sha1) }
                     }
                 }
             }
@@ -408,6 +463,7 @@ class DesktopSyncCoordinator(
                 val save = local ?: return@withContext SyncResult(error = tr("sync.error.local_save_not_found", fileName))
                 if (executeUpload(session, save, ctx, overwrite = true) == UploadOutcome.OK) {
                     hashStore?.clearFingerprint(romId)
+                    hashStore?.setSaveSynced(romId, save.fileName, save.sha1)
                     SyncResult(uploaded = 1, message = tr("sync.conflict.local_uploaded", fileName))
                 } else {
                     SyncResult(error = tr("sync.error.upload_failed", fileName))
@@ -441,6 +497,8 @@ class DesktopSyncCoordinator(
                 }
                 if (ok) {
                     hashStore?.clearFingerprint(romId)
+                    findSaves(ctx).find { it.fileName == fileName && it.kind == SaveKind.SAVE }
+                        ?.let { hashStore?.setSaveSynced(romId, fileName, it.sha1) }
                     SyncResult(downloaded = 1, message = tr("sync.conflict.server_restored", fileName))
                 } else {
                     SyncResult(error = tr("sync.error.download_failed", fileName))

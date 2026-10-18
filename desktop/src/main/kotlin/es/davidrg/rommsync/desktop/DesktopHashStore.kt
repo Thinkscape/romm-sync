@@ -95,4 +95,23 @@ class DesktopHashStore(private val file: File) {
     }
 
     private fun stateKey(romId: Int, fileName: String) = "state.$romId.$fileName"
+
+    /**
+     * Local sha1 of save slot [slot] (canonical local name) of [romId] at its last
+     * successful upload, download or identical-content check. RomM keeps its own
+     * per-device baseline by server save id, which another device's upload resets;
+     * this one decides whether a negotiated `download` would overwrite local changes.
+     */
+    @Synchronized
+    fun getSaveLocalHash(romId: Int, slot: String): String? {
+        reload()
+        return props.getProperty("save.$romId.$slot.local")
+    }
+
+    @Synchronized
+    fun setSaveSynced(romId: Int, slot: String, localHash: String) {
+        reload()
+        props["save.$romId.$slot.local"] = localHash
+        persist()
+    }
 }

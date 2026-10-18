@@ -323,6 +323,20 @@ class SyncCoordinator(
                     recordFailure(run, romId, target, listOf(ctx.rom), "sync.failed.action.download", "sync.failed.download_failed")
                     return
                 }
+                // RomM may answer `download` although this device changed the save too
+                // (another device's upload has no baseline for us): our own record decides.
+                val local = SyncSlots.localSaveFor(op, ctx.localFiles())
+                when (SyncSlots.guardDownload(local, local?.let { syncedHashStore?.getSyncedHash(romId, it.fileName) }, op.serverContentHash)) {
+                    SyncSlots.DownloadGuard.NOOP -> {
+                        local?.let { syncedHashStore?.setSyncedHash(romId, it.fileName, it.sha1) }
+                        return
+                    }
+                    SyncSlots.DownloadGuard.CONFLICT -> {
+                        handleSaveConflict(op.copy(reason = tr("sync.conflict.both_changed")), ctx, transfer, deviceId, run)
+                        return
+                    }
+                    SyncSlots.DownloadGuard.DOWNLOAD -> Unit
+                }
                 if (downloadSaveInto(ctx, transfer, saveId, deviceId, target)) {
                     run.completed++
                     run.downloaded++
@@ -413,12 +427,15 @@ class SyncCoordinator(
     ): Boolean {
         // Copia de seguridad de la copia local antes de pisarla
         backupLocalSave(ctx.rom.romId, target, ctx.localFiles(), ctx.handler)
-        val sha1 = transfer.downloadSave(saveId, deviceId, target, ctx.ref, ctx.basePath, ctx.handler)
+        transfer.downloadSave(saveId, deviceId, target, ctx.ref, ctx.basePath, ctx.handler)
             ?: return false
         // Ruta restringida staged: devolver la descarga al original
         commitStaged(ctx.rawBasePath)
-        syncedHashStore?.setSyncedHash(ctx.rom.romId, target, sha1)
         ctx.invalidate()
+        // Record the sha1 of the save as the handler now reports it (folder saves
+        // are re-zipped locally, so the downloaded blob's hash would not match).
+        val written = ctx.localFiles().find { it.fileName == target }
+        if (written != null) syncedHashStore?.setSyncedHash(ctx.rom.romId, target, written.sha1)
         return true
     }
 

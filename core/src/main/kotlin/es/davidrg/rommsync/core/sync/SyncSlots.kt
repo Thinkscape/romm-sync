@@ -89,6 +89,37 @@ object SyncSlots {
         return candidates.find { it.fileName == name }
     }
 
+    enum class DownloadGuard { DOWNLOAD, NOOP, CONFLICT }
+
+    /**
+     * Client-side check before applying a negotiated `download` of a save.
+     *
+     * RomM keys a device's sync baseline by server save id, and a save uploaded
+     * by another device is a new row with no baseline for this one, so
+     * negotiate answers `download` (timestamp fallback) even when this device
+     * also changed the save. The device's own record decides instead:
+     * - no local file → download;
+     * - local content equals the server copy ([serverContentHash] vs
+     *   [contentHashOf]) → nothing to do (caller records it as synced);
+     * - local sha1 equals the hash recorded at the last sync → local unchanged,
+     *   download;
+     * - otherwise (changed since the last sync, or never synced and different)
+     *   → conflict, surfaced like a server `conflict`.
+     */
+    fun guardDownload(
+        local: LocalSave?,
+        lastSyncedLocalHash: String?,
+        serverContentHash: String?,
+        contentHashOf: (LocalSave) -> String? = { RommContentHash.of(it.file) },
+    ): DownloadGuard = when {
+        local == null -> DownloadGuard.DOWNLOAD
+        serverContentHash != null && serverContentHash.equals(contentHashOf(local), ignoreCase = true) ->
+            DownloadGuard.NOOP
+        lastSyncedLocalHash != null && lastSyncedLocalHash.equals(local.sha1, ignoreCase = true) ->
+            DownloadGuard.DOWNLOAD
+        else -> DownloadGuard.CONFLICT
+    }
+
     fun formatIso8601(millis: Long): String {
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
