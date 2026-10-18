@@ -193,13 +193,14 @@ object SyncSlots {
      *   sha1 ([LocalSave.sha1]); a server `content_hash` is RomM's md5-based
      *   hash and is compared against [contentHashOf] of the local file.
      *
-     * Rules: local-only → upload; remote-only → download; both present → compare
-     * against the last sync: only local changed → upload, only remote changed →
-     * download, both changed (including first contact) → conflict, unless the
-     * server reports the same content hash. A remote version this device has not
-     * recorded but whose size equals the unchanged local file is taken as the
-     * same content (no download, the caller records it as synced): it is what an
-     * upload whose response could not be matched to the listing looks like.
+     * Rules: local-only → upload; remote-only → download; both present → equal
+     * server content hash → noop; otherwise compare against the last sync: only
+     * local changed → upload, only remote changed → download, both changed
+     * (including first contact) → conflict. A remote version this device has not
+     * recorded counts as changed even when its size equals the local file's:
+     * RomM 5.4's `StateSchema` exposes no `content_hash` (the column exists but is
+     * not serialised), and RetroArch states are fixed-size per core, so size says
+     * nothing about content.
      */
     fun planStates(
         localStates: List<LocalSave>,
@@ -225,8 +226,7 @@ object SyncSlots {
                     StateAction.NOOP
                 else -> {
                     val localChanged = lastLocalHash(name) != local.sha1
-                    val remoteChanged = !sameRemoteVersion(lastRemoteMarker(name), remote) &&
-                        !(!localChanged && remote.fileSizeBytes == local.file.length())
+                    val remoteChanged = !sameRemoteVersion(lastRemoteMarker(name), remote)
                     when {
                         localChanged && remoteChanged -> StateAction.CONFLICT
                         localChanged -> StateAction.UPLOAD

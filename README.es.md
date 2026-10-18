@@ -13,13 +13,17 @@ Cliente multiplataforma para servidores RomM: explora tu biblioteca, descarga RO
 
 </div>
 
+> **Aviso de fork.** Este es `Thinkscape/romm-sync`, un fork de [davidadrianrg/romm-sync](https://github.com/davidadrianrg/romm-sync) (MIT, © David RG) mantenido por Thinkscape. Añade el emparejamiento de dispositivos con RomM (`/api/auth/device/*`), la instalación remota desde la web de RomM ("Install on device") mediante el socket `/devices` y la reclamación de instalaciones, un demonio Linux sin interfaz (`romm-sync --daemon`, `--pair`), un mapa de slug de RomM → carpeta de ES-DE/Cocoon (`core/src/main/resources/platform_folders.json`) y sincronización de partidas/estados por ranuras. Cocoon no tiene un intent público de reescaneo: tras una instalación remota, usa Cocoon → Settings → Library & Data → Rescan Games (o reinicia Cocoon); ES-DE detecta los archivos nuevos en su siguiente arranque.
+>
+> **Media al instalar.** Tras cada instalación remota (`done` o `already_installed`, que se notifica primero), el cliente escribe la media y los metadatos scrapeados por RomM con la estructura de ES-DE (`core/.../metadata/EsdeMediaExporter.kt`, compartido con las acciones manuales "Exportar a ES-DE"): la media en `<MediaDirectory>/<sistema>/{covers,screenshots,titlescreens,marquees,fanart,3dboxes,backcovers,physicalmedia,miximages,videos,manuals}/<nombre de la rom>.<ext>`, y la entrada del juego (name, desc, rating, releasedate, developer, publisher, genre, players) se inserta o actualiza en `<carpeta ES-DE>/gamelists/<sistema>/gamelist.xml`, conservando los demás juegos y los campos propios de ES-DE. Demonio Linux: carpeta ES-DE `~/ES-DE` (ajuste `esde_data_dir`), `MediaDirectory` leído de su `settings/es_settings.xml`, se desactiva con la preferencia `esde.media_on_install=false`. Android: ajuste "Carpeta de metadatos ES-DE / Cocoon" (por defecto `<padre de la raíz de ROMs>/ES-DE` en almacenamiento extraíble) con `downloaded_media/` dentro; en Cocoon selecciónala en Settings → Library & Data → ES-DE Integration y activa las comprobaciones al inicio.
+
 ---
 
 ## 📥 Instalación
 
 ### Opción A — Android (recomendado)
 
-1. Descarga `RomM-Sync-vX.Y.Z-android.apk` desde [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest).
+1. Descarga `RomM-Sync-vX.Y.Z-android.apk` desde [GitHub Releases](https://github.com/Thinkscape/romm-sync/releases/latest).
 2. Configura tu servidor (ver abajo).
 3. En **Configuración → Actualizaciones**, pulsa *Buscar actualizaciones* cada vez que quieras comprobar si hay versión nueva. La app descarga el APK y lanza el instalador de Android — sin salir de la aplicación.
 
@@ -27,7 +31,7 @@ Cliente multiplataforma para servidores RomM: explora tu biblioteca, descarga RO
 
 ### Opción B — Linux (AppImage)
 
-1. Descarga el AppImage de tu arquitectura desde [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest):
+1. Descarga el AppImage de tu arquitectura desde [GitHub Releases](https://github.com/Thinkscape/romm-sync/releases/latest):
    - `RomM-Sync-vX.Y.Z-linux-x86_64.AppImage` — SteamOS, Steam Deck, la mayoría de PCs
    - `RomM-Sync-vX.Y.Z-linux-aarch64.AppImage` — Raspberry Pi 5, handhelds ARM
 2. Dale permisos de ejecución y ejecútalo:
@@ -42,7 +46,7 @@ Cliente multiplataforma para servidores RomM: explora tu biblioteca, descarga RO
 ### Opción C — Compilar desde código
 
 ```bash
-git clone https://github.com/davidadrianrg/romm-sync.git
+git clone https://github.com/Thinkscape/romm-sync.git
 cd romm-sync
 ./gradlew assembleDebug
 # APK → app/build/outputs/apk/debug/app-debug.apk
@@ -162,7 +166,7 @@ El APK de release se firma con una clave fija (secrets `SIGNING_KEYSTORE_BASE64`
 2. `./gradlew test` en verde.
 3. PR a `master` — CI debe pasar.
 
-Errores, ideas y PRs bienvenidos en [Issues](https://github.com/davidadrianrg/romm-sync/issues).
+Errores, ideas y PRs bienvenidos en [Issues](https://github.com/Thinkscape/romm-sync/issues).
 
 ## 📄 Licencia
 

@@ -1,7 +1,9 @@
 package es.davidrg.rommsync.core.install
 
+import es.davidrg.rommsync.core.metadata.EsdeTarget
 import es.davidrg.rommsync.core.remote.dto.RomDetailDto
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -20,6 +22,8 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.security.MessageDigest
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class InstallClientTest {
 
@@ -39,7 +43,9 @@ class InstallClientTest {
     private val requests: MutableList<RecordedRequest> = Collections.synchronizedList(mutableListOf())
     private val recorded = mutableListOf<Triple<RomDetailDto, File, List<File>>>()
     private val finished = mutableListOf<Pair<String, String>>()
-    private val logs = mutableListOf<String>()
+    private val logs: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    /** Holds every media (`/assets/…`) response until released. */
+    private val mediaGate = CountDownLatch(1)
 
     @Before
     fun setUp() {
@@ -55,6 +61,10 @@ class InstallClientTest {
                     request.method == "PUT" && segments.size == 5 && segments.take(4) == listOf("api", "devices", DEVICE, "installs") -> {
                         reports += segments[4] to request.body.readUtf8()
                         MockResponse().setBody("{}")
+                    }
+                    request.method == "GET" && request.requestUrl!!.encodedPath.startsWith("/assets/") -> {
+                        mediaGate.await(15, TimeUnit.SECONDS)
+                        MockResponse().setBody("cover")
                     }
                     request.method == "GET" && segments.size == 6 && segments[0] == "api" && segments[1] == "roms" &&
                         segments[3] == "files" && segments[4] == "content" -> {
@@ -74,10 +84,11 @@ class InstallClientTest {
 
     @After
     fun tearDown() {
+        mediaGate.countDown()
         server.shutdown()
     }
 
-    private fun client(downloadsAllowed: Boolean = true) = InstallClient(
+    private fun client(downloadsAllowed: Boolean = true, esdeTarget: () -> EsdeTarget? = { null }) = InstallClient(
         baseUrl = server.url("/").toString(),
         token = "rmm_device",
         deviceId = DEVICE,
@@ -95,6 +106,7 @@ class InstallClientTest {
         },
         httpClient = OkHttpClient(),
         logger = { logs += it },
+        esdeTarget = esdeTarget,
     )
 
     private fun sha1(bytes: ByteArray) =
@@ -104,8 +116,9 @@ class InstallClientTest {
         """{"id":$id,"rom_id":0,"file_name":"$name","file_path":"$path","file_size_bytes":${bytes.size},""" +
             """"sha1_hash":${sha1?.let { "\"$it\"" } ?: "null"},"md5_hash":null,"crc_hash":null,"category":"game"}"""
 
-    private fun romJson(id: Int, slug: String, fsName: String, fsPath: String, files: List<String>) =
-        """{"id":$id,"platform_slug":"$slug","fs_name":"$fsName","fs_path":"$fsPath","name":"x","files":[${files.joinToString(",")}]}"""
+    private fun romJson(id: Int, slug: String, fsName: String, fsPath: String, files: List<String>, cover: String? = null) =
+        """{"id":$id,"platform_slug":"$slug","fs_name":"$fsName","fs_path":"$fsPath","name":"x",""" +
+            """"path_cover_large":${cover?.let { "\"$it\"" } ?: "null"},"files":[${files.joinToString(",")}]}"""
 
     private fun claim(vararg entries: Pair<String, Pair<Int, List<Int>>>) {
         claimBody = entries.joinToString(",", "[", "]") { (id, rom) ->
@@ -275,6 +288,36 @@ class InstallClientTest {
 
         assertTrue(requests.isEmpty())
         assertTrue(reports.isEmpty())
+    }
+
+    @Test
+    fun `slow media export does not delay the next install or its report`() = runBlocking {
+        val a = "rom-a".toByteArray()
+        val b = "rom-b".toByteArray()
+        contents[101] = a
+        contents[102] = b
+        roms[10] = romJson(10, "nes", "A.nes", "roms/nes", listOf(fileJson(101, "A.nes", "roms/nes", a)), cover = "/assets/romm/resources/roms/1/10/cover/big.png")
+        roms[11] = romJson(11, "nes", "B.nes", "roms/nes", listOf(fileJson(102, "B.nes", "roms/nes", b)), cover = "/assets/romm/resources/roms/1/11/cover/big.png")
+        claim("r10" to (10 to listOf(101)), "r11" to (11 to listOf(102)))
+        val esde = File(tmp.root, "ES-DE")
+        val client = client(esdeTarget = { EsdeTarget(esde, File(esde, "downloaded_media")) })
+
+        try {
+            // Inline export would block on the gated cover of r10 before r11 is even downloaded.
+            withTimeout(10_000) { client.drainNow() }
+
+            assertEquals(listOf("r10" to """{"status":"done"}""", "r11" to """{"status":"done"}"""), reports.toList())
+            assertArrayEquals(b, File(root, "nes/B.nes").readBytes())
+            // The export for r10 is running (its cover request is held) while both reports are in.
+            val deadline = System.currentTimeMillis() + 5_000
+            while (requests.none { it.requestUrl!!.encodedPath.startsWith("/assets/") } && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20)
+            }
+            assertTrue(requests.any { it.requestUrl!!.encodedPath == "/assets/romm/resources/roms/1/10/cover/big.png" })
+        } finally {
+            mediaGate.countDown()
+            client.stop()
+        }
     }
 
     companion object {

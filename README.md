@@ -23,7 +23,7 @@ Cross-platform client for RomM servers: browse your library, download ROMs strai
 
 ### Option A — Android (recommended)
 
-1. Download `RomM-Sync-vX.Y.Z-android.apk` from [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest).
+1. Download `RomM-Sync-vX.Y.Z-android.apk` from [GitHub Releases](https://github.com/Thinkscape/romm-sync/releases/latest).
 2. Configure your server (see below).
 3. In **Settings → Updates**, tap *Check for updates* whenever you want to check for a new version. The app downloads the APK and launches the Android installer — without leaving the app.
 
@@ -31,7 +31,7 @@ Cross-platform client for RomM servers: browse your library, download ROMs strai
 
 ### Option B — Linux (AppImage)
 
-1. Download the AppImage for your architecture from [GitHub Releases](https://github.com/davidadrianrg/romm-sync/releases/latest):
+1. Download the AppImage for your architecture from [GitHub Releases](https://github.com/Thinkscape/romm-sync/releases/latest):
    - `RomM-Sync-vX.Y.Z-linux-x86_64.AppImage` — SteamOS, Steam Deck, most PCs
    - `RomM-Sync-vX.Y.Z-linux-aarch64.AppImage` — Raspberry Pi 5, ARM handhelds
 2. Give it execute permission and run it:
@@ -46,7 +46,7 @@ Cross-platform client for RomM servers: browse your library, download ROMs strai
 ### Option C — Build from source
 
 ```bash
-git clone https://github.com/davidadrianrg/romm-sync.git
+git clone https://github.com/Thinkscape/romm-sync.git
 cd romm-sync
 ./gradlew assembleDebug
 # APK → app/build/outputs/apk/debug/app-debug.apk
@@ -168,7 +168,7 @@ The release APK is signed with a fixed key (secrets `SIGNING_KEYSTORE_BASE64` an
 2. `./gradlew test` green.
 3. PR to `master` — CI must pass.
 
-Bugs, ideas and PRs welcome in [Issues](https://github.com/davidadrianrg/romm-sync/issues).
+Bugs, ideas and PRs welcome in [Issues](https://github.com/Thinkscape/romm-sync/issues).
 
 ## 📄 License
 

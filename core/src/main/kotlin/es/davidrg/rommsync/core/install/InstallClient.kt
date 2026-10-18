@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 import retrofit2.HttpException
@@ -83,6 +85,8 @@ interface InstallListener {
  * After a successful install (`done`/`already_installed`, once reported), when
  * [esdeTarget] yields a folder, RomM's scraped media and metadata are exported
  * there in ES-DE's layout ([EsdeMediaExporter]) so the launcher needs no scrape.
+ * Exports run one at a time on their own queue, each bounded by a timeout, so
+ * slow media never holds up the next claim or install.
  *
  * Request ids are strings (RomM `InstallRequestSchema.id: str`).
  */
@@ -122,6 +126,8 @@ class InstallClient(
     private var scope: CoroutineScope? = null
     private var triggers: Channel<Unit>? = null
     private var socket: Socket? = null
+    private var exportScope: CoroutineScope? = null
+    private var exports: Channel<ExportJob>? = null
 
     /** Opens the socket and starts the periodic drain. No-op when already started. */
     fun start() {
@@ -153,7 +159,10 @@ class InstallClient(
         }
     }
 
-    /** Closes the socket and cancels every coroutine, aborting a running download (its `.part` files are removed). */
+    /**
+     * Closes the socket and cancels every coroutine, aborting a running download
+     * (its `.part` files are removed) and any queued or running media export.
+     */
     fun stop() {
         synchronized(lock) {
             socket?.let {
@@ -165,6 +174,10 @@ class InstallClient(
             triggers = null
             scope?.cancel()
             scope = null
+            exports?.close()
+            exports = null
+            exportScope?.cancel()
+            exportScope = null
         }
     }
 
@@ -313,11 +326,23 @@ class InstallClient(
             finish(request, STATUS_FAILED, describe(e), emptyList())
             return
         }
-        // Reported first so RomM shows the result promptly; media follows.
-        exportMetadata(request, outcome)
+        // Reported first so RomM shows the result promptly; media follows off the drain path.
+        enqueueExport(request, outcome)
     }
 
-    private suspend fun exportMetadata(request: InstallRequestDto, outcome: Outcome) {
+    private class ExportJob(
+        val requestId: String,
+        val rom: RomDetailDto,
+        val primary: File,
+        val folder: String,
+        val target: EsdeTarget,
+    )
+
+    /**
+     * Queues the media/metadata export for a successful install. Exports run one
+     * at a time on a worker independent of [start], so [drainNow] never waits for them.
+     */
+    private fun enqueueExport(request: InstallRequestDto, outcome: Outcome) {
         val rom = outcome.rom ?: return
         val primary = outcome.primary ?: return
         val folder = outcome.folder ?: return
@@ -328,16 +353,35 @@ class InstallClient(
             log("media: cannot resolve ES-DE folder: ${describe(e)}")
             null
         } ?: return
+        val queue = synchronized(lock) {
+            exports ?: Channel<ExportJob>(Channel.UNLIMITED).also { channel ->
+                val worker = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                worker.launch { for (job in channel) exportMetadata(job) }
+                exportScope = worker
+                exports = channel
+            }
+        }
+        queue.trySend(ExportJob(request.id, rom, primary, folder, target))
+    }
+
+    private suspend fun exportMetadata(job: ExportJob) {
+        val rom = job.rom
         try {
-            val result = mediaExporter.exportFor(rom, primary, folder, target.esdeDir, target.mediaDir)
+            val result = withTimeout(EXPORT_TIMEOUT_MS) {
+                mediaExporter.exportFor(rom, job.primary, job.folder, job.target.esdeDir, job.target.mediaDir)
+            }
             log("media: ${result.files.size} files for rom ${rom.id} (${result.written.size} downloaded, ${result.failures.size} failed)")
-            listener.onMetadataExported(request.id, rom.id, result.files.size, result.failures)
+            listener.onMetadataExported(job.requestId, rom.id, result.files.size, result.failures)
+        } catch (e: TimeoutCancellationException) {
+            val reason = "media export timed out after ${EXPORT_TIMEOUT_MS / 1000} s"
+            log("media: $reason for rom ${rom.id}")
+            listener.onMetadataExported(job.requestId, rom.id, 0, listOf(reason))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             val reason = describe(e)
             log("media: export failed for rom ${rom.id}: $reason")
-            listener.onMetadataExported(request.id, rom.id, 0, listOf(reason))
+            listener.onMetadataExported(job.requestId, rom.id, 0, listOf(reason))
         }
     }
 
@@ -500,6 +544,7 @@ class InstallClient(
         const val EVENT_INSTALL_CANCELLED = "install:cancelled"
 
         private const val DRAIN_INTERVAL_MS = 60_000L
+        private const val EXPORT_TIMEOUT_MS = 5 * 60_000L
         private const val RECONNECT_DELAY_MS = 5_000L
         private const val RECONNECT_DELAY_MAX_MS = 300_000L
         private const val PART_SUFFIX = ".part"

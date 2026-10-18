@@ -159,7 +159,7 @@ fun SyncScreen() {
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
         ) {
             // -- Estado actual
-            item { StatusCard(syncState, lastTimestamp, lastSummary) }
+            item { StatusCard(syncState, lastTimestamp, lastSummary, unresolvedConflicts = conflicts.size) }
 
             // -- Conflictos pendientes de resolución
             if (conflicts.isNotEmpty()) {
@@ -581,6 +581,7 @@ private fun StatusCard(
     syncState: SyncState,
     lastTimestamp: Long,
     lastSummary: String,
+    unresolvedConflicts: Int,
 ) {
     val (icon, iconTint, title, subtitle) = when (syncState) {
         SyncState.Idle -> {
@@ -612,7 +613,14 @@ private fun StatusCard(
             tr("saves.status.syncing"),
             tr("saves.status.connecting"),
         )
-        is SyncState.Success -> parseSyncResult(syncState.message, syncState.hasWarnings, syncState.allSynced)
+        is SyncState.Success -> parseSyncResult(
+            message = syncState.message,
+            hasWarnings = syncState.hasWarnings,
+            allSynced = syncState.allSynced,
+            // Only while the run reported conflicts and the stored list still has some;
+            // once all are resolved the view model already rewrites the state to "conflicts resolved".
+            unresolvedConflicts = if (syncState.conflicts > 0) unresolvedConflicts else 0,
+        )
         is SyncState.Failed -> Quad(
             Icons.Filled.Error,
             MaterialTheme.colorScheme.error,
@@ -952,7 +960,7 @@ private fun formatServerTimestamp(iso: String): String = try {
 }
 /**
  * Estado visual del resultado del sync: se decide por las señales explícitas
- * de SyncState.Success (avisos / nada que hacer), nunca leyendo el texto del
+ * de SyncState.Success (conflictos / avisos / nada que hacer), nunca leyendo el texto del
  * mensaje, que es traducible y en otro idioma rompería el chequeo.
  */
 @Composable
@@ -960,8 +968,18 @@ private fun parseSyncResult(
     message: String,
     hasWarnings: Boolean,
     allSynced: Boolean,
+    unresolvedConflicts: Int,
 ): Quad<ImageVector, androidx.compose.ui.graphics.Color, String, String> {
-    return if (hasWarnings) {
+    return if (unresolvedConflicts > 0) {
+        Quad(
+            Icons.Filled.Warning,
+            MaterialTheme.colorScheme.tertiary,
+            tr("android.sync.status.conflicts"),
+            listOf(tr("android.sync.status.conflicts_pending", unresolvedConflicts), message)
+                .filter { it.isNotBlank() }
+                .joinToString("\n"),
+        )
+    } else if (hasWarnings) {
         Quad(
             Icons.Filled.Warning,
             MaterialTheme.colorScheme.tertiary,

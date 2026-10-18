@@ -127,8 +127,21 @@ class StandaloneSaveLayoutsTest {
         val archive = zip(tmp.newFile("dl.zip"), mapOf("BASLUS-20032/save.bin" to "data"))
         val handler = Ps2SaveHandler()
 
+        // Neither the rom name nor the save name carries a serial: only the ISO reader can resolve it.
         assertFalse(handler.extractDownload(archive, rom.name, "ps2", memcards.path, "save.zip"))
+        assertFalse(File(memcards, "Mcd001.ps2/BASLUS-20032").exists())
         assertTrue(handler.extractDownload(archive, rom.name, "ps2", memcards.path, "save.zip", rom.path))
+        assertEquals("data", File(memcards, "Mcd001.ps2/BASLUS-20032/save.bin").readText())
+    }
+
+    @Test
+    fun `ps2 extractDownload falls back to the serial in the save name without a local ROM`() = runTest {
+        val memcards = tmp.newFolder("memcards")
+        File(memcards, "Mcd001.ps2").mkdirs()
+        val archive = zip(tmp.newFile("dl.zip"), mapOf("BASLUS-20032/save.bin" to "data"))
+
+        // No romLocalPath and no serial in the rom name: the asset name `BA<serial>_save.zip` decides.
+        assertTrue(Ps2SaveHandler().extractDownload(archive, "Some Game (USA).iso", "ps2", memcards.path, "BASLUS-20032_save.zip"))
         assertEquals("data", File(memcards, "Mcd001.ps2/BASLUS-20032/save.bin").readText())
     }
 

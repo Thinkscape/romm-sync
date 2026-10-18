@@ -138,15 +138,30 @@ class SyncSlotsTest {
     }
 
     @Test
-    fun `unknown remote version with unchanged local of the same size is not downloaded`() {
+    fun `unknown remote version of the same size is not mistaken for local content`() {
+        // RetroArch states are fixed-size per core: equal size says nothing about content.
         val file = File.createTempFile("state", ".auto").apply { writeBytes(ByteArray(10)); deleteOnExit() }
-        val localState = LocalSave(1, "A.state.auto", file, 0L, "same", SaveKind.STATE)
-        val op = SyncSlots.planStates(
-            listOf(localState),
-            listOf(remote(7, "A.state.auto")), // fileSizeBytes = 10
+        fun plan(sha1: String) = SyncSlots.planStates(
+            listOf(LocalSave(1, "A.state.auto", file, 0L, sha1, SaveKind.STATE)),
+            listOf(remote(7, "A.state.auto")), // fileSizeBytes = 10, no content_hash (RomM 5.4)
             "retroarch",
             lastLocalHash = { "same" },
             lastRemoteMarker = { "something-else" },
+        ).single().action
+
+        assertEquals(StateAction.DOWNLOAD, plan("same")) // local unchanged since the last sync
+        assertEquals(StateAction.CONFLICT, plan("edited")) // local changed too
+    }
+
+    @Test
+    fun `unknown remote version with a matching content hash is a no-op`() {
+        val op = SyncSlots.planStates(
+            listOf(local("A.state.auto", "same", SaveKind.STATE)),
+            listOf(remote(7, "A.state.auto", hash = "romm-of-local")),
+            "retroarch",
+            lastLocalHash = { "same" },
+            lastRemoteMarker = { "something-else" },
+            contentHashOf = { "romm-of-local" },
         ).single()
         assertEquals(StateAction.NOOP, op.action)
     }

@@ -21,7 +21,8 @@ import java.util.zip.ZipFile
  *   is not alphanumeric.
  * - Any of the above inside a `.zip` (largest disc entry, streamed). `.7z`
  *   archives are not read (no solid-archive random access): null.
- * - **Switch** (XCI/NSP) and **3DS** (3DS/CCI/CIA): see below; uncompressed only.
+ * - **Switch** (XCI/NSP) and **3DS** (3DS/CCI/CIA): see below; uncompressed only,
+ *   except Azahar's Z3DS containers (`.zcci`/`.zcxi`/`.zcia`), read via [Z3dsReader].
  *
  * Null → el llamador hace fallback a la extracción por nombre de fichero.
  * Todos los métodos devuelven null ante cualquier error de lectura.
@@ -269,8 +270,16 @@ object RomHeaderIdReader {
      * Nota: un .cia empaqueta los contenidos con un header TMD delante; el
      * primer NCCH no está en offset fijo. Se escanea el prefijo buscando el
      * magic "NCCH" y validando el prefijo 0x00040000 del title-id leído.
+     *
+     * Z3DS (`.zcci`, `.zcxi`, `.zcia`; detected by magic): the title id comes from
+     * the container's uncompressed `titleinfo` metadata, nothing is decompressed.
      */
     private fun readN3dsTitleId(file: File): String? {
+        if (Z3dsReader.isZ3ds(file)) {
+            return Z3dsReader.readTitleId(file)
+                ?.takeIf { (it shr 32) == 0x00040000L }
+                ?.let { "%016X".format(it) }
+        }
         if (isCompressed(file)) return null
         val prefix = readPrefix(file, N3DS_SCAN_BYTES) ?: return null
         var i = indexOf(prefix, byteArrayOf(0x4E, 0x43, 0x43, 0x48)) // "NCCH"
