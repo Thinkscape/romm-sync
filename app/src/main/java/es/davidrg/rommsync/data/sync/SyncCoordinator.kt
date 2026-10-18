@@ -176,26 +176,29 @@ class SyncCoordinator(
                     SyncSupport.Supported
             }
             .map { rom -> romContext(rom, platformConfigs[rom.platformSlug], retroArchBase, profile) }
+            // A save folder that is missing or unreadable (e.g. Android/data on Android 13
+            // without root) can neither be scanned nor written: leave the rom out of this run
+            // instead of failing every download. The Sync screen lists such folders in red.
+            .filter { ctx ->
+                val ok = isPathReadable(ctx.rawBasePath)
+                if (!ok) {
+                    Log.i(TAG, "Save folder unreachable, '${ctx.rom.name}' skipped: ${ctx.rawBasePath}")
+                    // Una ruta configurada (por juego o por plataforma) que no se puede
+                    // leer: avisar explícitamente en el resultado.
+                    val explicitOverride = !ctx.rom.savesPathOverride.isNullOrBlank() ||
+                        platformConfigs[ctx.rom.platformSlug]?.savesPathOverride?.isNotBlank() == true
+                    if (explicitOverride && pathWarnings.size < MAX_PATH_WARNINGS) {
+                        pathWarnings.add("${ctx.rom.name}: ${ctx.rawBasePath}")
+                    }
+                }
+                ok
+            }
             .associateBy { it.rom.romId }
         val localSavesMap = mutableMapOf<Int, List<LocalSave>>()
         val fingerprintHits = mutableSetOf<Int>()
 
         for (ctx in contexts.values) {
             val rom = ctx.rom
-            val config = platformConfigs[rom.platformSlug]
-            val effectiveBasePath = ctx.basePath
-
-            // Una ruta configurada (por juego o por plataforma) que no se puede
-            // leer haría que el handler devolviera 0 saves en silencio: el sync
-            // diría "Todo sincronizado" sin pista alguna. Avisar explícitamente.
-            val explicitOverride = !rom.savesPathOverride.isNullOrBlank() ||
-                config?.savesPathOverride?.isNotBlank() == true
-            if (explicitOverride && !isPathReadable(effectiveBasePath) &&
-                pathWarnings.size < MAX_PATH_WARNINGS
-            ) {
-                Log.w(TAG, "Ruta de saves configurada ilegible: '${rom.name}' → $effectiveBasePath")
-                pathWarnings.add("${rom.name}: $effectiveBasePath")
-            }
 
             // ── Atajo por fingerprint: si los saves no cambiaron desde el
             // último sync, saltarse el zipeo+hash completo de este ROM. ──
@@ -425,6 +428,7 @@ class SyncCoordinator(
         deviceId: String,
         target: String,
     ): Boolean {
+        if (!emulatorFolderPresent(ctx)) return false
         // Copia de seguridad de la copia local antes de pisarla
         backupLocalSave(ctx.rom.romId, target, ctx.localFiles(), ctx.handler)
         transfer.downloadSave(saveId, deviceId, target, ctx.ref, ctx.basePath, ctx.handler)
@@ -562,12 +566,23 @@ class SyncCoordinator(
         return true
     }
 
+    /**
+     * Downloads only go into a save folder the emulator already created (and
+     * this app can reach): writing into a missing one would invent an
+     * `Android/data/...` skeleton the emulator never reads.
+     */
+    private fun emulatorFolderPresent(ctx: RomContext): Boolean =
+        isPathReadable(ctx.rawBasePath).also { ok ->
+            if (!ok) Log.w(TAG, "Save folder missing or unreadable, download skipped: ${ctx.rawBasePath}")
+        }
+
     private suspend fun downloadStateInto(
         ctx: RomContext,
         transfer: SaveTransfer,
         remote: ServerAssetDto,
         name: String,
     ): Boolean {
+        if (!emulatorFolderPresent(ctx)) return false
         backupLocalSave(ctx.rom.romId, name, ctx.localFiles(), ctx.handler)
         val sha1 = transfer.downloadState(remote.id, name, ctx.ref, ctx.basePath, ctx.handler) ?: return false
         commitStaged(ctx.rawBasePath)

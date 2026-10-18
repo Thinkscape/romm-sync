@@ -51,6 +51,11 @@ data class SaveAccessItem(
     val platformSlugs: List<String>,
     val path: String,
     val usable: Boolean,
+    /**
+     * Unreadable and under `Android/data` on Android 13+, where the system
+     * folder picker refuses that tree: a grant cannot help, only root.
+     */
+    val blockedBySystem: Boolean = false,
 )
 
 class SyncViewModel(
@@ -260,7 +265,9 @@ class SyncViewModel(
                     platformSlugs = list.map { it.slug }.distinct().sorted(),
                     path = path,
                     usable = SavePathAccess.isUsable(path, appContext),
-                )
+                ).let { item ->
+                    item.copy(blockedBySystem = !item.usable && SavePathAccess.isSystemBlocked(path))
+                }
             }
             .sortedWith(compareBy<SaveAccessItem>({ it.usable }, { it.emulatorName }))
     }

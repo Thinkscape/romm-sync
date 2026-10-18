@@ -229,11 +229,18 @@ class DeviceSyncSaveHandlersTest {
         assertEquals("/e/saves/rpcs3/saves", deck.handlerBasePath("rpcs3", "ps3"))
 
         val thor = SavePaths.android("/storage/EBD7-FF2C")
+        fun thorPath(emu: String, slug: String) = SaveHandlerRegistry.getDefaultSavesPath(emu, slug, "/unused", thor)
         assertEquals("/storage/EBD7-FF2C/RetroArch", thor.handlerBasePath("retroarch", "gba"))
+        assertEquals("/storage/EBD7-FF2C/PPSSPP/PSP/SAVEDATA", thorPath("ppsspp", "psp"))
+        assertEquals("/storage/EBD7-FF2C/Azahar/sdmc/Nintendo 3DS", thorPath("azahar", "3ds"))
+        assertEquals("/storage/EBD7-FF2C/Vita3K/ux0/user/00/savedata", thorPath("vita3k", "psvita"))
+        assertEquals("/storage/EBD7-FF2C/melonDS/saves", thorPath("melonds", "nds"))
+        assertEquals("/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/GC", thorPath("dolphin", "ngc"))
         assertEquals(
-            "/storage/EBD7-FF2C/Android/data/dev.eden.eden_emulator/files/nand/user/save",
-            SaveHandlerRegistry.getDefaultSavesPath("eden", "switch", "/unused", thor),
+            "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files/nand/user/save",
+            thorPath("eden", "switch"),
         )
+        assertEquals("/storage/emulated/0/Android/data/xyz.aethersx2.android/files/memcards", thorPath("aethersx2", "ps2"))
     }
 
     @Test

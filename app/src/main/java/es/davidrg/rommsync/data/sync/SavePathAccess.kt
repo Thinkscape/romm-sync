@@ -84,4 +84,14 @@ object SavePathAccess {
         ) return true
         return SafTreeStore(context).hasGrantFor(path)
     }
+
+    /**
+     * true when [path] lies in another app's `Android/data` (or `Android/obb`)
+     * on Android 13+: the system folder picker no longer lets the user grant
+     * those trees, so without root they stay unreadable. Read-only check.
+     */
+    fun isSystemBlocked(path: String): Boolean =
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            (path.contains("/Android/data/") || path.contains("/Android/obb/")) &&
+            !RootShell.available
 }

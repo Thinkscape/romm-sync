@@ -556,14 +556,18 @@ private fun SaveAccessRow(access: SaveAccessItem, onGrant: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                if (access.usable) access.path else tr("android.sync.access.unreadable", access.path),
+                when {
+                    access.usable -> access.path
+                    access.blockedBySystem -> tr("android.sync.access.blocked", access.emulatorName, access.path)
+                    else -> tr("android.sync.access.unreadable", access.path)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (!access.usable) {
+        if (!access.usable && !access.blockedBySystem) {
             Spacer(modifier = Modifier.size(8.dp))
             FilledTonalButton(onClick = onGrant) {
                 Text(tr("android.sync.access.grant"), maxLines = 1)

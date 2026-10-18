@@ -107,32 +107,39 @@ object SavePaths {
         )
     }
 
+    /** Android primary (internal) shared storage. */
+    const val ANDROID_INTERNAL_ROOT = "/storage/emulated/0"
+
     /**
-     * Android layout with all emulation data on the volume [sdRoot] (the
-     * Thor's SD card, e.g. `/storage/EBD7-FF2C`; `/storage/emulated/0` gives
-     * upstream's internal-storage defaults). Emulators that let the user pick a
-     * data folder use `<sdRoot>/<Emu>/`; the rest keep their app-specific
-     * `Android/data/<pkg>/files` tree on that volume (reached through SAF on
-     * an unrooted device).
+     * Android layout for a device whose emulation data lives on the volume
+     * [sdRoot] (the Thor's SD card, e.g. `/storage/EBD7-FF2C`). Verified on the
+     * Thor with `adb ls`:
+     * - emulators whose data folder was chosen on the card keep it there:
+     *   RetroArch `RetroArch/`, melonDS `melonDS/`, PPSSPP memstick `PPSSPP/`,
+     *   Azahar user dir `Azahar/`, Vita3K `Vita3K/`, DuckStation `duckstation/`;
+     * - Dolphin, Eden and NetherSX2 keep their app-specific
+     *   `Android/data/<pkg>/files` tree on internal storage [internalRoot]
+     *   (unreadable on Android 13 without root).
      */
-    fun android(sdRoot: String): SaveProfile {
-        fun p(relative: String) = File(sdRoot, relative).path
+    fun android(sdRoot: String, internalRoot: String = ANDROID_INTERNAL_ROOT): SaveProfile {
+        fun sd(relative: String) = File(sdRoot, relative).path
+        fun internal(relative: String) = File(internalRoot, relative).path
         return SaveProfile(
             name = "ANDROID",
             host = SaveHost.ANDROID,
             paths = mapOf(
-                EmulatorId.RETROARCH.id to EmulatorPaths(p("RetroArch/saves"), p("RetroArch/states")),
-                EmulatorId.DUCKSTATION.id to EmulatorPaths(p("duckstation/memcards"), p("duckstation/savestates")),
-                EmulatorId.AETHERSX2.id to EmulatorPaths(p("NetherSX2/memcards"), p("NetherSX2/sstates")),
-                EmulatorId.MELONDS.id to EmulatorPaths(p("melonDS/saves"), p("melonDS/states")),
-                EmulatorId.PPSSPP.id to EmulatorPaths(
-                    p("Android/data/org.ppsspp.ppsspp/files/PSP/SAVEDATA"),
-                    p("Android/data/org.ppsspp.ppsspp/files/PSP/PPSSPP_STATE"),
+                EmulatorId.RETROARCH.id to EmulatorPaths(sd("RetroArch/saves"), sd("RetroArch/states")),
+                EmulatorId.DUCKSTATION.id to EmulatorPaths(sd("duckstation/memcards"), sd("duckstation/savestates")),
+                EmulatorId.AETHERSX2.id to EmulatorPaths(
+                    internal("Android/data/xyz.aethersx2.android/files/memcards"),
+                    internal("Android/data/xyz.aethersx2.android/files/sstates"),
                 ),
-                EmulatorId.DOLPHIN.id to EmulatorPaths(p("Android/data/org.dolphinemu.dolphinemu/files/GC")),
-                EmulatorId.AZAHAR.id to EmulatorPaths(p("Android/data/org.azahar_emu.azahar/files/sdmc/Nintendo 3DS")),
-                EmulatorId.EDEN.id to EmulatorPaths(p("Android/data/dev.eden.eden_emulator/files/nand/user/save")),
-                EmulatorId.VITA3K.id to EmulatorPaths(p("Android/data/org.vita3k.emulator/files/vita/ux0/user/00/savedata")),
+                EmulatorId.MELONDS.id to EmulatorPaths(sd("melonDS/saves"), sd("melonDS/states")),
+                EmulatorId.PPSSPP.id to EmulatorPaths(sd("PPSSPP/PSP/SAVEDATA"), sd("PPSSPP/PSP/PPSSPP_STATE")),
+                EmulatorId.DOLPHIN.id to EmulatorPaths(internal("Android/data/org.dolphinemu.dolphinemu/files/GC")),
+                EmulatorId.AZAHAR.id to EmulatorPaths(sd("Azahar/sdmc/Nintendo 3DS")),
+                EmulatorId.EDEN.id to EmulatorPaths(internal("Android/data/dev.eden.eden_emulator/files/nand/user/save")),
+                EmulatorId.VITA3K.id to EmulatorPaths(sd("Vita3K/ux0/user/00/savedata")),
             ),
         )
     }

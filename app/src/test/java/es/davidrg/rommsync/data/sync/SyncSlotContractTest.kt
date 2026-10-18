@@ -103,6 +103,23 @@ class SyncSlotContractTest {
     }
 
     @Test
+    fun `Thor SD profile resolves the verified emulator folders and overrides win`() {
+        val profile = SavePathResolver.deviceProfile("/storage/EBD7-FF2C/ROMs")
+        fun path(slug: String, emulator: String?, override: String? = null) =
+            SavePathResolver.platformBasePath(slug, emulator, override, "/storage/emulated/0/RetroArch", profile)
+
+        assertThat(path("psp", null)).isEqualTo("/storage/EBD7-FF2C/PPSSPP/PSP/SAVEDATA")
+        assertThat(path("3ds", null)).isEqualTo("/storage/EBD7-FF2C/Azahar/sdmc/Nintendo 3DS")
+        assertThat(path("psvita", null)).isEqualTo("/storage/EBD7-FF2C/Vita3K/ux0/user/00/savedata")
+        assertThat(path("nds", null)).isEqualTo("/storage/EBD7-FF2C/melonDS/saves")
+        assertThat(path("ngc", null)).isEqualTo("/storage/emulated/0/Android/data/org.dolphinemu.dolphinemu/files/GC")
+        assertThat(path("switch", null))
+            .isEqualTo("/storage/emulated/0/Android/data/dev.eden.eden_emulator/files/nand/user/save")
+        assertThat(path("ps2", null)).isEqualTo("/storage/emulated/0/Android/data/xyz.aethersx2.android/files/memcards")
+        assertThat(path("psp", null, override = "/storage/EBD7-FF2C/custom")).isEqualTo("/storage/EBD7-FF2C/custom")
+    }
+
+    @Test
     fun `download of a datetime tagged server save lands at the canonical local name`() = runTest {
         val base = tmp.newFolder("RetroArch")
         val api = mockk<RomMApiService>()
