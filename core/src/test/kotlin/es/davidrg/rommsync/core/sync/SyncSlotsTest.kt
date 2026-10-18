@@ -28,7 +28,9 @@ class SyncSlotsTest {
                 1 to listOf(local("Game.srm"), local("Game.state1", kind = SaveKind.STATE)),
                 2 to listOf(local("Other.sav")),
             ),
-        ) { romId -> if (romId == 1) "retroarch" else "melonds" }
+            emulatorFor = { romId -> if (romId == 1) "retroarch" else "melonds" },
+            contentHashOf = { "romm-${it.fileName}" },
+        )
 
         assertEquals(listOf("Game.srm", "Other.sav"), states.map { it.fileName })
         assertEquals(listOf("Game.srm", "Other.sav"), states.map { it.slot })
@@ -100,6 +102,7 @@ class SyncSlotsTest {
             emulator = "retroarch",
             lastLocalHash = { null },
             lastRemoteMarker = { null },
+            contentHashOf = { it.sha1 },
         ).single()
         assertEquals(2, plan.remote?.id)
         assertEquals(StateAction.NOOP, plan.action)

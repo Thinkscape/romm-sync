@@ -734,7 +734,8 @@ class DesktopSyncCoordinator(
             emulator = ctx.emulator.take(SyncSlots.EMULATOR_MAX_LENGTH),
             deviceId = session.deviceId,
             slot = SyncSlots.slotFor(save),
-            contentHash = save.sha1,
+            // RomM's own hash of the uploaded bytes (what negotiate sent), not the local sha1.
+            contentHash = es.davidrg.rommsync.core.sync.RommContentHash.of(fileToUpload),
             overwrite = overwrite,
         ).close()
         UploadOutcome.OK

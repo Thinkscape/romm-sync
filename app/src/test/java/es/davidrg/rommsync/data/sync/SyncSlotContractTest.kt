@@ -58,6 +58,32 @@ class SyncSlotContractTest {
     }
 
     @Test
+    fun `negotiate content_hash is RomM's hash - md5 for plain saves, composite for zips`() {
+        val dir = tmp.newFolder()
+        val srm = File(dir, "Game.srm").apply { writeText("abc") }
+        val zip = File(dir, "0100ABCD.zip")
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { out ->
+            out.putNextEntry(java.util.zip.ZipEntry("z.bin")); out.write("abc".toByteArray()); out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("dir/")); out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("a.bin")); out.closeEntry()
+        }
+        fun md5(s: String) = java.security.MessageDigest.getInstance("MD5").digest(s.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+        val saves = SyncCoordinator.buildNegotiateRequests(
+            deviceId = "dev",
+            scopeRomIds = listOf(1, 2),
+            savesByRom = mapOf(1 to listOf(save(1, srm)), 2 to listOf(save(2, zip))),
+            emulatorFor = { "retroarch" },
+        ).single().saves.associate { it.fileName to it.contentHash }
+
+        assertThat(saves["Game.srm"]).isEqualTo(md5("abc"))
+        assertThat(saves["0100ABCD.zip"]).isEqualTo(
+            md5("a.bin:${md5("")}\nz.bin:${md5("abc")}"),
+        )
+    }
+
+    @Test
     fun `negotiate scope is chunked to the server rom-id cap`() {
         val ids = (1..(SyncSlots.MAX_ROM_IDS_PER_NEGOTIATE + 1)).toList()
         val requests = SyncCoordinator.buildNegotiateRequests("dev", ids, emptyMap()) { "retroarch" }
@@ -127,7 +153,8 @@ class SyncSlotContractTest {
                 emulator = "retroarch",
                 deviceId = "dev-1",
                 slot = "Game.srm",
-                contentHash = "sha-Game.srm",
+                // md5("x"): RomM's content hash, not the local sha1.
+                contentHash = "9dd4e461268c8034f5c8564e155c67a6",
                 overwrite = false,
             )
         }

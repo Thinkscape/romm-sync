@@ -2,6 +2,7 @@ package es.davidrg.rommsync.data.sync
 
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.ServerAssetDto
+import es.davidrg.rommsync.core.sync.RommContentHash
 import es.davidrg.rommsync.core.sync.SyncSlots
 import es.davidrg.rommsync.core.sync.platform.LocalSave
 import es.davidrg.rommsync.core.sync.platform.SaveHandler
@@ -49,14 +50,16 @@ class SaveTransfer(
         handler: SaveHandler,
         overwrite: Boolean,
     ): UploadOutcome = try {
-        val body = handler.prepareForUpload(save).asRequestBody(OCTET_STREAM)
+        val prepared = handler.prepareForUpload(save)
+        val body = prepared.asRequestBody(OCTET_STREAM)
         api.uploadSave(
             file = MultipartBody.Part.createFormData("saveFile", save.fileName, body),
             romId = romId,
             emulator = emulator.take(SyncSlots.EMULATOR_MAX_LENGTH),
             deviceId = deviceId,
             slot = SyncSlots.slotFor(save),
-            contentHash = save.sha1,
+            // RomM's own hash of the uploaded bytes (what negotiate sent), not the local sha1.
+            contentHash = RommContentHash.of(prepared),
             overwrite = overwrite,
         ).close()
         UploadOutcome.OK

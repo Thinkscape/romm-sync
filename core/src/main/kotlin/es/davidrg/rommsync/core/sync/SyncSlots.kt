@@ -43,11 +43,14 @@ object SyncSlots {
     /**
      * Negotiate entries for [savesByRom] (rom id → handler results): saves only,
      * each with a non-null slot and emulator. [emulatorFor] gives the emulator id
-     * used for a rom on this device.
+     * used for a rom on this device. `content_hash` is RomM's own hash
+     * ([RommContentHash]) of the bytes that would be uploaded: every handler
+     * uploads [LocalSave.file] as-is (folder saves are already zipped there).
      */
     fun clientSaveStates(
         savesByRom: Map<Int, List<LocalSave>>,
         emulatorFor: (romId: Int) -> String,
+        contentHashOf: (LocalSave) -> String? = { RommContentHash.of(it.file) },
     ): List<ClientSaveState> = savesByRom.flatMap { (romId, saves) ->
         val emulator = emulatorFor(romId).take(EMULATOR_MAX_LENGTH)
         saves.filter { it.kind == SaveKind.SAVE }.map { save ->
@@ -56,7 +59,7 @@ object SyncSlots {
                 fileName = save.fileName,
                 slot = slotFor(save),
                 emulator = emulator,
-                contentHash = save.sha1,
+                contentHash = contentHashOf(save),
                 updatedAt = formatIso8601(save.lastModified),
                 fileSizeBytes = save.file.length().toInt(),
             )
@@ -155,7 +158,9 @@ object SyncSlots {
      *   by [emulator] (or with no emulator but a same-named local file) take part:
      *   another emulator's state is not loadable here.
      * - [lastLocalHash] / [lastRemoteMarker]: what this device recorded for a
-     *   name at its last successful sync (null = never synced).
+     *   name at its last successful sync (null = never synced). Local hashes are
+     *   sha1 ([LocalSave.sha1]); a server `content_hash` is RomM's md5-based
+     *   hash and is compared against [contentHashOf] of the local file.
      *
      * Rules: local-only → upload; remote-only → download; both present → compare
      * against the last sync: only local changed → upload, only remote changed →
@@ -171,6 +176,7 @@ object SyncSlots {
         emulator: String,
         lastLocalHash: (name: String) -> String?,
         lastRemoteMarker: (name: String) -> String?,
+        contentHashOf: (LocalSave) -> String? = { RommContentHash.of(it.file) },
     ): List<StateOp> {
         val locals = localStates.filter { it.kind == SaveKind.STATE }.associateBy { it.fileName }
         val remotes = remoteStates
@@ -184,7 +190,7 @@ object SyncSlots {
             val action = when {
                 remote == null -> StateAction.UPLOAD
                 local == null -> StateAction.DOWNLOAD
-                remote.contentHash != null && remote.contentHash.equals(local.sha1, ignoreCase = true) ->
+                remote.contentHash != null && remote.contentHash.equals(contentHashOf(local), ignoreCase = true) ->
                     StateAction.NOOP
                 else -> {
                     val localChanged = lastLocalHash(name) != local.sha1
