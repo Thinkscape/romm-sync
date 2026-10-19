@@ -40,8 +40,11 @@ object CocoonAutoImport {
 
     private const val TAG = "CocoonAutoImport"
     private const val PREFS = "cocoon_auto_import"
-    private const val KEY_PENDING_SINCE = "pending_since"
+    /** Pre-generation marker key; migrated by [marker]. */
+    private const val KEY_LEGACY_PENDING_SINCE = "pending_since"
     private const val SETTLE_MS = 5_000L
+    /** A failed rescan is not retried for the same install generation within this window. */
+    private const val FAILURE_BACKOFF_MS = 10 * 60_000L
     private const val NOTIFICATION_ID_FALLBACK = 4202
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -53,18 +56,17 @@ object CocoonAutoImport {
         val app = context.applicationContext
         val settings = (app as? RomMSyncApplication)?.container?.settingsDataStore ?: return
         if (!settings.getCocoonAutoImportEnabledBlocking() || !isCocoonInstalled(app)) return
+        // Recorded right away (persisted, bumps the generation on every install) so a
+        // running flow cannot clear it; [RescanMarker.isDue] enforces the settle delay.
+        marker(app).recordInstall()
         settleJob?.cancel()
         settleJob = scope.launch {
             delay(SETTLE_MS)
-            markPending(app)
+            notifyPending(app)
         }
     }
 
-    private fun markPending(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.getLong(KEY_PENDING_SINCE, 0L) == 0L) {
-            prefs.edit().putLong(KEY_PENDING_SINCE, System.currentTimeMillis()).apply()
-        }
+    private fun notifyPending(context: Context) {
         val service = CocoonRescanService.instance
         if (service == null && !ensureServiceEnabled(context)) {
             Log.w(TAG, "rescan pending but the accessibility service is off; notifying")
@@ -75,16 +77,50 @@ object CocoonAutoImport {
         service?.onRescanPending()
     }
 
-    fun isPending(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_PENDING_SINCE, 0L) != 0L
+    @Volatile
+    private var markerInstance: RescanMarker? = null
 
-    fun pendingSince(context: Context): Long =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_PENDING_SINCE, 0L)
+    @Synchronized
+    private fun marker(context: Context): RescanMarker {
+        markerInstance?.let { return it }
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val store = object : LongStore {
+            override fun getLong(key: String): Long? =
+                if (prefs.contains(key)) prefs.getLong(key, 0L) else null
 
-    /** The rescan ran (successfully or not): stop retrying until the next install. */
-    fun clearPending(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_PENDING_SINCE).apply()
+            override fun putLongs(values: Map<String, Long?>) {
+                val editor = prefs.edit()
+                values.forEach { (key, value) -> if (value == null) editor.remove(key) else editor.putLong(key, value) }
+                editor.apply()
+            }
+        }
+        val created = RescanMarker(store, System::currentTimeMillis, SETTLE_MS, FAILURE_BACKOFF_MS)
+        if (prefs.contains(KEY_LEGACY_PENDING_SINCE)) {
+            if (prefs.getLong(KEY_LEGACY_PENDING_SINCE, 0L) != 0L) created.recordInstall()
+            prefs.edit().remove(KEY_LEGACY_PENDING_SINCE).apply()
+        }
+        markerInstance = created
+        return created
     }
+
+    fun isPending(context: Context): Boolean = marker(context).isPending
+
+    /** Pending, settled, and not backing off after a failure for the same generation. */
+    fun isDue(context: Context): Boolean = marker(context).isDue()
+
+    /** Generation a flow captures at start and hands to [clearPending] / [recordFailure]. */
+    fun pendingGeneration(context: Context): Long = marker(context).generation
+
+    fun lastInstallAt(context: Context): Long = marker(context).lastInstallAt
+
+    /** The rescan flow that started at [startedGeneration] succeeded; later installs stay pending. */
+    fun clearPending(context: Context, startedGeneration: Long) = marker(context).clear(startedGeneration)
+
+    /** The rescan flow failed: the marker stays, retries for that generation back off. */
+    fun recordFailure(context: Context, startedGeneration: Long) = marker(context).recordFailure(startedGeneration)
+
+    /** Auto-import was switched off: forget every pending install. */
+    fun discardPending(context: Context) = marker(context).discard()
 
     fun cocoonVersion(context: Context): String? = runCatching {
         context.packageManager.getPackageInfo(COCOON_PACKAGE, 0).versionName

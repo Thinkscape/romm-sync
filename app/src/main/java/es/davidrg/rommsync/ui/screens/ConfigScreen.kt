@@ -573,7 +573,7 @@ fun ConfigScreen() {
                             if (enabled) {
                                 es.davidrg.rommsync.install.CocoonAutoImport.ensureServiceEnabled(context)
                             } else {
-                                es.davidrg.rommsync.install.CocoonAutoImport.clearPending(context)
+                                es.davidrg.rommsync.install.CocoonAutoImport.discardPending(context)
                                 es.davidrg.rommsync.install.CocoonAutoImport.disableService(context)
                             }
                             cocoonServiceOn = es.davidrg.rommsync.install.CocoonAutoImport.isServiceEnabled(context)

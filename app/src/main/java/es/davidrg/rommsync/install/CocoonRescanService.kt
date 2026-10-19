@@ -76,7 +76,7 @@ class CocoonRescanService : AccessibilityService() {
         receiverRegistered = true
         setContentEvents(false)
         Log.i(TAG, "service connected (Cocoon ${CocoonAutoImport.cocoonVersion(this)})")
-        if (CocoonAutoImport.isPending(this)) scheduleEvaluate(FOREGROUND_SETTLE_MS)
+        if (CocoonAutoImport.isDue(this)) scheduleEvaluate(FOREGROUND_SETTLE_MS)
     }
 
     override fun onDestroy() {
@@ -94,7 +94,7 @@ class CocoonRescanService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val type = event.eventType
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            if (flowJob?.isActive != true && CocoonAutoImport.isPending(this)) {
+            if (flowJob?.isActive != true && CocoonAutoImport.isDue(this)) {
                 scheduleEvaluate(FOREGROUND_SETTLE_MS)
             }
         }
@@ -115,10 +115,10 @@ class CocoonRescanService : AccessibilityService() {
     }
 
     private fun evaluate() {
-        if (!CocoonAutoImport.isPending(this) || flowJob?.isActive == true) return
+        if (!CocoonAutoImport.isDue(this) || flowJob?.isActive == true) return
         val settings = (application as RomMSyncApplication).container.settingsDataStore
         if (!settings.getCocoonAutoImportEnabledBlocking()) {
-            CocoonAutoImport.clearPending(this)
+            CocoonAutoImport.discardPending(this)
             return
         }
         val blocker = foregroundBlocker()
@@ -126,7 +126,13 @@ class CocoonRescanService : AccessibilityService() {
             Log.i(TAG, "rescan pending, waiting: $blocker")
             return
         }
-        flowJob = scope.launch { runFlow() }
+        flowJob = scope.launch { runFlow() }.also { job ->
+            // Installs that arrived while the flow ran keep the marker set: run again
+            // once this flow is gone (isDue still applies the settle and failure backoff).
+            job.invokeOnCompletion { cause ->
+                if (cause == null) scope.launch { scheduleEvaluate(FOREGROUND_SETTLE_MS) }
+            }
+        }
     }
 
     /** Why the flow cannot start now, or null when Cocoon's home screen is in front. */
@@ -149,10 +155,12 @@ class CocoonRescanService : AccessibilityService() {
     private class FlowAborted(message: String) : Exception(message)
 
     private suspend fun runFlow() {
-        val pendingSince = CocoonAutoImport.pendingSince(this)
+        // Only installs up to this generation are covered by this flow's rescan.
+        val generation = CocoonAutoImport.pendingGeneration(this)
+        val lastInstallAt = CocoonAutoImport.lastInstallAt(this)
         val started = SystemClock.elapsedRealtime()
         val version = CocoonAutoImport.cocoonVersion(this)
-        Log.i(TAG, "flow start (Cocoon $version, pending for ${System.currentTimeMillis() - pendingSince} ms)")
+        Log.i(TAG, "flow start (Cocoon $version, generation $generation, last install ${System.currentTimeMillis() - lastInstallAt} ms ago)")
         setContentEvents(true)
         chooseHomeDisplay()
         try {
@@ -171,31 +179,32 @@ class CocoonRescanService : AccessibilityService() {
                 step("dismiss result") { clickText("OK") }
                 returnHome()
                 Log.i(TAG, "flow done in ${SystemClock.elapsedRealtime() - started} ms: $newGames new games " +
-                    "(${System.currentTimeMillis() - pendingSince} ms after the last install settled)")
+                    "(${System.currentTimeMillis() - lastInstallAt} ms after the last install it covers)")
             }
-            CocoonAutoImport.clearPending(this)
+            CocoonAutoImport.clearPending(this, generation)
             CocoonAutoImport.cancelFallback(this)
         } catch (e: FlowAborted) {
             Log.i(TAG, "flow aborted: ${e.message}; rescan stays pending")
         } catch (e: CancellationException) {
             if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                fail("timed out after ${FLOW_TIMEOUT_MS / 1000} s")
+                fail(generation, "timed out after ${FLOW_TIMEOUT_MS / 1000} s")
             } else {
                 throw e
             }
         } catch (e: FlowFailure) {
-            fail(e.message ?: "failure")
+            fail(generation, e.message ?: "failure")
         } catch (e: Exception) {
-            fail("${e.javaClass.simpleName}: ${e.message}")
+            fail(generation, "${e.javaClass.simpleName}: ${e.message}")
         } finally {
             setContentEvents(false)
         }
     }
 
-    private suspend fun fail(reason: String) {
+    private suspend fun fail(generation: Long, reason: String) {
         Log.w(TAG, "flow failed ($reason); backing out to Cocoon home and posting the manual-rescan notification")
         runCatching { backOut() }
-        CocoonAutoImport.clearPending(this)
+        // Keep the marker (a later install or the backoff expiry retries); never drop it here.
+        CocoonAutoImport.recordFailure(this, generation)
         CocoonAutoImport.postFallback(this)
     }
 
