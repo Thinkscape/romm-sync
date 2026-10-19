@@ -35,7 +35,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1000
-        versionName = "1.0.0-thinkscape.7"
+        versionName = "1.0.0-thinkscape.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -318,16 +318,30 @@ class CocoonRescanService : AccessibilityService() {
      * starts ES-DE again on [displayId]. Confirmed by ES-DE's log starting over.
      * An ES-DE Companion shown on another display that closed itself with ES-DE's
      * quit is started again on its display first, so ES-DE keeps the input focus.
+     *
+     * ES-DE running as the HOME app ignores Back. Started through its regular
+     * activity, it ends its own process and starts again as the HOME app, without a
+     * clean shutdown (no gamelist writes), so the edits are applied first and ES-DE
+     * is relaunched in place; the companion keeps running (no quit event).
      */
     private suspend fun esdeRestartFlow(generation: Long, displayId: Int) {
         val started = SystemClock.elapsedRealtime()
         val headBefore = EsdeReloader.logHead(this)
         Log.i(TAG, "ES-DE idle in front on display $displayId: restarting it (generation $generation)")
+        if (EsdeReloader.runsAsHomeApp(this)) {
+            val applied = EsdeReloader.applyEdits(this)
+            Log.i(TAG, "ES-DE runs as the HOME app: $applied edits applied; relaunching it on display $displayId")
+            startEsdeAndConfirm(generation, displayId, started, headBefore, "HOME-app relaunch")
+            return
+        }
         fun esdeWindow() = topAppWindows().firstOrNull { it.root?.packageName?.toString() == EsdeReloader.ESDE_PACKAGE }
         fun companionWindow() = topAppWindows().firstOrNull { it.root?.packageName?.toString() == ESDE_COMPANION_PACKAGE }
+        // Quit = its window is gone or its log shows the shutdown / a new start (ES-DE as the
+        // HOME app may come back on its own right after a regular copy quits).
+        fun esdeQuit() = esdeWindow() == null || !EsdeReloader.isRunning(this) || EsdeReloader.logHead(this) != headBefore
         val companionDisplay = companionWindow()?.displayIdCompat()
         var presses = 0
-        while (esdeWindow() != null && presses < ESDE_MAX_BACK_PRESSES) {
+        while (!esdeQuit() && presses < ESDE_MAX_BACK_PRESSES) {
             val front = busyApp(allowCompanion = true)
             if (front != null && front != EsdeReloader.ESDE_PACKAGE) {
                 Log.i(TAG, "ES-DE restart aborted: foreground changed to $front; stays pending")
@@ -341,14 +355,14 @@ class CocoonRescanService : AccessibilityService() {
             presses++
             delay(ESDE_BACK_INTERVAL_MS)
         }
-        if (esdeWindow() != null) {
+        if (!esdeQuit()) {
             EsdeReloader.recordFailure(this, generation, "ES-DE still on screen after $presses Back presses " +
                 "(is 'Back button exits app' off?)")
             return
         }
         // The window goes before the process: wait for ES-DE's clean shutdown.
         val quitBy = SystemClock.elapsedRealtime() + ESDE_QUIT_TIMEOUT_MS
-        while (EsdeReloader.isRunning(this) && SystemClock.elapsedRealtime() < quitBy) delay(200)
+        while (EsdeReloader.isRunning(this) && EsdeReloader.logHead(this) == headBefore && SystemClock.elapsedRealtime() < quitBy) delay(200)
         val applied = EsdeReloader.applyEdits(this)
         if (companionDisplay != null) {
             // "Close Companion App on ES-DE Quit" reacts to the same log line; give it a moment.
@@ -365,6 +379,16 @@ class CocoonRescanService : AccessibilityService() {
             }.onFailure { Log.w(TAG, "ES-DE Companion start failed: ${it.message}") }
         }
         Log.i(TAG, "ES-DE quit after $presses Back presses; $applied edits applied; starting it on display $displayId")
+        startEsdeAndConfirm(generation, displayId, started, headBefore, "restart, $presses Back presses")
+    }
+
+    /**
+     * Starts ES-DE's regular activity on [displayId] (a copy running as the HOME app
+     * restarts itself) and waits for its log to start over. A HOME-app copy that came
+     * back on its own after [headBefore] is restarted again by this start and counts.
+     */
+    private suspend fun startEsdeAndConfirm(generation: Long, displayId: Int, started: Long, headBefore: String?, how: String) {
+        val headAtStart = EsdeReloader.logHead(this)
         try {
             startActivity(EsdeReloader.launchIntent(), ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
         } catch (e: Exception) {
@@ -374,9 +398,9 @@ class CocoonRescanService : AccessibilityService() {
         val confirmBy = SystemClock.elapsedRealtime() + ESDE_START_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < confirmBy) {
             val head = EsdeReloader.logHead(this)
-            if (head != null && head != headBefore) {
+            if (head != null && (head != headAtStart || headAtStart != headBefore)) {
                 EsdeReloader.clear(this, generation,
-                    "es-de refreshed (restart in ${SystemClock.elapsedRealtime() - started} ms, $presses Back presses)")
+                    "es-de refreshed ($how in ${SystemClock.elapsedRealtime() - started} ms)")
                 return
             }
             delay(300)

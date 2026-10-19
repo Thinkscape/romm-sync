@@ -36,7 +36,9 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * - ES-DE idle in front (and focused) when the change settles: the service presses
  *   Back until ES-DE quits ("Back button exits app", on by default; ES-DE logs
  *   "cleanly shutting down"), runs the queued edits of ES-DE's files and starts
- *   ES-DE again on the same display.
+ *   ES-DE again on the same display. ES-DE running as the Android HOME app ignores
+ *   Back: the edits run first and ES-DE is relaunched through its regular activity,
+ *   which makes it end its process and start again as the HOME app.
  * - ES-DE not on screen: the queued edits run now. If ES-DE's log ends with its
  *   clean shutdown it is not running and the refresh is done; otherwise the stale
  *   copy is restarted as above the moment it comes back to the front (before the
@@ -60,6 +62,7 @@ object EsdeReloader {
     private const val SETTLE_MS = 5_000L
     private const val FAILURE_BACKOFF_MS = 2 * 60_000L
     private const val SHUTDOWN_MARK = "ES-DE cleanly shutting down"
+    private const val HOME_APP_MARK = "Running as the Android home app"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val edits = ConcurrentLinkedQueue<Pair<String, () -> Unit>>()
@@ -232,6 +235,14 @@ object EsdeReloader {
     /** First line of ES-DE's log; ES-DE truncates the log at every start, so a new line means a new process. */
     fun logHead(context: Context): String? =
         logFile(context)?.let { file -> runCatching { file.bufferedReader().use { it.readLine() } }.getOrNull() }
+
+    /** The running ES-DE started as the Android HOME app (its log's first lines say so). */
+    fun runsAsHomeApp(context: Context): Boolean {
+        val log = logFile(context) ?: return false
+        return runCatching {
+            log.bufferedReader().use { reader -> generateSequence { reader.readLine() }.take(5).any { HOME_APP_MARK in it } }
+        }.getOrDefault(false)
+    }
 
     fun launchIntent(): Intent = Intent(Intent.ACTION_MAIN)
         .addCategory(Intent.CATEGORY_LAUNCHER)
