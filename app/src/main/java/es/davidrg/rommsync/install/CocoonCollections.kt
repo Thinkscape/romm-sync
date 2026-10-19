@@ -3,7 +3,6 @@ package es.davidrg.rommsync.install
 import android.content.Context
 import android.os.storage.StorageManager
 import android.util.Log
-import es.davidrg.rommsync.RomMSyncApplication
 import java.io.File
 
 /**
@@ -54,10 +53,9 @@ object CocoonCollections {
         return ledger.also { ledgerInstance = it }
     }
 
-    /** Folder work exists, the feature (the "Auto-import into Cocoon" toggle) is on, and no failure backoff runs. */
+    /** Folder work exists, Cocoon automation ([CocoonAutomation]) is on, and no failure backoff runs. */
     fun isDue(context: Context): Boolean {
-        val settings = (context.applicationContext as? RomMSyncApplication)?.container?.settingsDataStore ?: return false
-        if (!settings.getCocoonAutoImportEnabledBlocking()) return false
+        if (!CocoonAutomation.isEnabled(context)) return false
         // Load the ledger first: its first load after an app update clears the backoff.
         val ledger = ledger(context)
         val failedAt = prefs(context).getLong(KEY_FAILED_AT, 0L)

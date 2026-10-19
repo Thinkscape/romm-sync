@@ -570,28 +570,23 @@ fun ConfigScreen() {
                         onCheckedChange = { enabled ->
                             cocoonAutoImportLocal = enabled
                             viewModel.setCocoonAutoImportEnabled(enabled)
-                            if (enabled) {
-                                es.davidrg.rommsync.install.CocoonAutoImport.ensureServiceEnabled(context)
-                            } else {
-                                es.davidrg.rommsync.install.CocoonAutoImport.discardPending(context)
-                                es.davidrg.rommsync.install.CocoonAutoImport.disableService(context)
-                            }
+                            // Off keeps the accessibility service: it also refreshes ES-DE.
+                            if (!enabled) es.davidrg.rommsync.install.CocoonAutoImport.discardPending(context)
+                            es.davidrg.rommsync.install.CocoonAutoImport.ensureServiceEnabled(context)
                             cocoonServiceOn = es.davidrg.rommsync.install.CocoonAutoImport.isServiceEnabled(context)
                         },
                     )
                 }
-                if (cocoonAutoImportOn) {
-                    Text(
-                        tr(if (cocoonServiceOn) "android.config.cocoon_service_on" else "android.config.cocoon_service_off"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (cocoonServiceOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                    )
-                    if (!cocoonServiceOn) {
-                        TextButton(onClick = {
-                            context.startActivity(es.davidrg.rommsync.install.CocoonAutoImport.accessibilitySettingsIntent())
-                        }) {
-                            Text(tr("android.config.cocoon_service_open"))
-                        }
+                Text(
+                    tr(if (cocoonServiceOn) "android.config.cocoon_service_on" else "android.config.cocoon_service_off"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (cocoonServiceOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                )
+                if (!cocoonServiceOn) {
+                    TextButton(onClick = {
+                        context.startActivity(es.davidrg.rommsync.install.CocoonAutoImport.accessibilitySettingsIntent())
+                    }) {
+                        Text(tr("android.config.cocoon_service_open"))
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))

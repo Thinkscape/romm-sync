@@ -12,7 +12,6 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import es.davidrg.rommsync.R
-import es.davidrg.rommsync.RomMSyncApplication
 import es.davidrg.rommsync.core.i18n.tr
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,8 +53,7 @@ object CocoonAutoImport {
     @Synchronized
     fun onLibraryChanged(context: Context) {
         val app = context.applicationContext
-        val settings = (app as? RomMSyncApplication)?.container?.settingsDataStore ?: return
-        if (!settings.getCocoonAutoImportEnabledBlocking() || !isCocoonInstalled(app)) return
+        if (!CocoonAutomation.isEnabled(app) || !isCocoonInstalled(app)) return
         // Recorded right away (persisted, bumps the generation on every install) so a
         // running flow cannot clear it; [RescanMarker.isDue] enforces the settle delay.
         marker(app).recordInstall()
@@ -161,16 +159,6 @@ object CocoonAutoImport {
             Log.w(TAG, "could not enable accessibility service: ${it.message}")
             false
         }
-    }
-
-    /** Removes only this app's service from the enabled list (toggle switched off). */
-    fun disableService(context: Context) {
-        if (context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return
-        val resolver = context.contentResolver
-        val me = serviceComponent(context)
-        val current = Settings.Secure.getString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return
-        val updated = current.split(':').filter { it.isNotBlank() && ComponentName.unflattenFromString(it) != me }
-        runCatching { Settings.Secure.putString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, updated.joinToString(":")) }
     }
 
     private fun serviceComponent(context: Context) = ComponentName(context, CocoonRescanService::class.java)

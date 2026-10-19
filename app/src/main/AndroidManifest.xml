@@ -42,6 +42,11 @@
         <package android:name="org.es_de.frontend" />
         <provider android:authorities="org.dolphinemu.dolphinemu.user" />
         <provider android:authorities="dev.eden.eden_emulator.user" />
+        <!-- Default HOME app: Cocoon automation only uncovers Cocoon when Cocoon is HOME. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <application

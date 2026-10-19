@@ -185,8 +185,8 @@ object DesktopConfig {
         get() = prefs.get("skipped_version", "")
         set(v) = prefs.put("skipped_version", v)
 
-    /** Versión de la app desktop (para el comprobador de actualizaciones). Keep equal to app versionName. */
-    const val appVersion: String = "1.0.0-thinkscape.1"
+    /** App version (update checker, reported client_version); generated from app versionName. */
+    const val appVersion: String = DesktopBuildInfo.VERSION
 
     private const val KEY_IDENTIFIER = "device.identifier"
     private const val KEY_PAIRED_TOKEN = "paired.token"

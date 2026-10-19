@@ -26,6 +26,7 @@ import java.security.MessageDigest
 class CocoonCollectionWriter(private val context: Context) : LauncherCollectionWriter {
 
     override fun write(collection: DeviceCollection, members: List<CollectionMember>, cover: File?) {
+        if (!CocoonAutomation.isEnabled(context)) return
         val pattern = CocoonFolderPattern.build(members.flatMap { CocoonFolderPattern.namesFor(it.files) })
         val source = cover?.takeIf { it.isFile && it.length() > 0 }
         val coverSha1 = source?.let(::sha1)
@@ -42,6 +43,7 @@ class CocoonCollectionWriter(private val context: Context) : LauncherCollectionW
     }
 
     override fun remove(key: String, name: String) {
+        if (!CocoonAutomation.isEnabled(context)) return
         val needed = CocoonCollections.ledger(context).forget(key)
         Log.i(TAG, "collection $key '$name' left RomM; folder removal needed=$needed")
         coversFor(key).forEach { it.delete() }

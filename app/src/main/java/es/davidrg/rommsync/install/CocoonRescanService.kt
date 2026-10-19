@@ -19,7 +19,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
-import es.davidrg.rommsync.RomMSyncApplication
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -163,23 +162,33 @@ class CocoonRescanService : AccessibilityService() {
     private fun evaluate() {
         if (flowJob?.isActive == true) return
         if (evaluateEsde()) return
-        val rescan = CocoonAutoImport.isDue(this)
-        val folderWork = !rescan && CocoonCollections.isDue(this)
-        if (folderWork && CocoonAutoImport.isSettling(this)) {
-            // Installs still settling: their rescan goes first (onRescanPending re-evaluates).
-            scheduleEvaluate(FOREGROUND_SETTLE_MS)
-            return
+        val enabled = CocoonAutomation.isEnabled(this)
+        val rescanDue = CocoonAutoImport.isDue(this)
+        val step = CocoonAutomation.step(
+            enabled = enabled,
+            rescanDue = rescanDue,
+            folderWorkDue = !rescanDue && CocoonCollections.isDue(this),
+            installsSettling = CocoonAutoImport.isSettling(this),
+        )
+        when (step) {
+            CocoonAutomation.Step.NONE -> {
+                // A failed folder pass waits out its backoff; nothing else would wake the service then.
+                if (enabled) CocoonCollections.backoffRemainingMs(this).takeIf { it > 0 }?.let { scheduleEvaluate(it + FOREGROUND_SETTLE_MS) }
+                return
+            }
+            CocoonAutomation.Step.DISCARD_PENDING -> {
+                Log.i(TAG, "Cocoon automation is off: pending rescan dropped")
+                CocoonAutoImport.discardPending(this)
+                return
+            }
+            CocoonAutomation.Step.WAIT_FOR_SETTLE -> {
+                // Installs still settling: their rescan goes first (onRescanPending re-evaluates).
+                scheduleEvaluate(FOREGROUND_SETTLE_MS)
+                return
+            }
+            CocoonAutomation.Step.RESCAN, CocoonAutomation.Step.FOLDERS -> Unit
         }
-        if (!rescan && !folderWork) {
-            // A failed folder pass waits out its backoff; nothing else would wake the service then.
-            CocoonCollections.backoffRemainingMs(this).takeIf { it > 0 }?.let { scheduleEvaluate(it + FOREGROUND_SETTLE_MS) }
-            return
-        }
-        val settings = (application as RomMSyncApplication).container.settingsDataStore
-        if (!settings.getCocoonAutoImportEnabledBlocking()) {
-            CocoonAutoImport.discardPending(this)
-            return
-        }
+        val rescan = step == CocoonAutomation.Step.RESCAN
         if (getSystemService(PowerManager::class.java).isInteractive && uncoverCocoonGrid()) {
             scheduleEvaluate(FOREGROUND_SETTLE_MS)
             return
@@ -223,9 +232,11 @@ class CocoonRescanService : AccessibilityService() {
      * the user is using, its context is stale and it covers Cocoon's home grid,
      * which would hold every Cocoon flow. Brings Cocoon's second-screen home back
      * in front of it on that display (the companion keeps running behind it and
-     * comes back with ES-DE). Returns true when it did so.
+     * comes back with ES-DE). Only when Cocoon automation is on and Cocoon is
+     * the HOME app ([CocoonAutomation.mayUncoverCocoon]). Returns true when it did so.
      */
     private fun uncoverCocoonGrid(): Boolean {
+        if (!CocoonAutomation.mayUncoverCocoon(CocoonAutomation.isEnabled(this), CocoonAutomation.homePackage(this))) return false
         val top = topAppWindows()
         if (top.any { it.root?.packageName?.toString() == EsdeReloader.ESDE_PACKAGE }) return false
         if (top.any { it.root?.packageName?.toString().let { p -> p != CocoonAutoImport.COCOON_PACKAGE && p != ESDE_COMPANION_PACKAGE } }) return false
