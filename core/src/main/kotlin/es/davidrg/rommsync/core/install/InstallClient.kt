@@ -1,5 +1,12 @@
 package es.davidrg.rommsync.core.install
 
+import es.davidrg.rommsync.core.collections.CollectionBackend
+import es.davidrg.rommsync.core.collections.DeviceCollection
+import es.davidrg.rommsync.core.collections.LauncherGameRemover
+import es.davidrg.rommsync.core.collections.LocalInstallResult
+import es.davidrg.rommsync.core.collections.LocalUninstallResult
+import es.davidrg.rommsync.core.collections.Provenance
+import es.davidrg.rommsync.core.collections.RomProvenanceStore
 import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.download.RomFileVerification
 import es.davidrg.rommsync.core.metadata.EsdeMediaExporter
@@ -34,7 +41,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONObject
 import retrofit2.HttpException
 import java.io.File
@@ -47,10 +56,19 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
+/** A rom present on this device as recorded at install: [primary] is the rom file or game folder. */
+data class InstalledRom(val romId: Int, val platformSlug: String, val primary: File, val files: List<File>)
+
 /** Where the app records ROMs that are present locally (feeds the library and save sync). */
 interface InstalledRomStore {
     /** [primaryFile] is the rom file, or the game folder for multi-file roms; [files] every file written. */
     fun recordInstalled(rom: RomDetailDto, primaryFile: File, files: List<File>)
+
+    /** The recorded install of [romId]; null when unknown (uninstall then falls back to RomM's file list). */
+    fun installed(romId: Int): InstalledRom? = null
+
+    /** Drops the record of [romId] after its files were removed. */
+    fun forgetInstalled(romId: Int) {}
 }
 
 /** Callbacks for UI/notifications. Invoked from background threads. */
@@ -66,6 +84,15 @@ interface InstallListener {
      * problems; [mediaFiles] counts media written or already present.
      */
     fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {}
+
+    /** RomM's collection subscriptions may have changed (`connect` or `event`); re-run collection sync. */
+    fun onCollectionsChanged(reason: String) {}
+
+    /**
+     * An uninstall finished: [requestId] is RomM's request id, null when collection
+     * sync removed the rom. [files] are the files deleted.
+     */
+    fun onUninstallFinished(requestId: String?, romId: Int, status: String, reason: String?, files: List<File>) {}
 }
 
 /**
@@ -73,15 +100,21 @@ interface InstallListener {
  *
  * Holds a socket.io connection to RomM's `/devices` namespace (path
  * `/ws/socket.io`, handshake `auth: {token}`), which keeps the device online
- * and delivers `install:queued` / `install:cancelled`. A drain (claim + install
- * every taken request, one download at a time) runs on connect, on
- * `install:queued`, on [drainNow], and every 60 s regardless of the socket,
+ * and delivers `install:queued` / `install:cancelled` / `collections:changed`.
+ * A drain (claim + handle every taken request, one at a time) runs on connect,
+ * on `install:queued`, on [drainNow], and every 60 s regardless of the socket,
  * since a claim alone also keeps the device online for 90 s.
  *
  * Files are streamed to `<target>.part`, checked against size and hash, then
  * renamed into `<romsRoot>/<platform folder>/` (multi-file roms go into a
  * `<fs_name>/` game folder, `<fs_name>.m3u/` when the set has an `.m3u`).
- * Nothing is ever deleted except this client's own `.part` files.
+ * Requests with `action=uninstall` delete exactly the rom files recorded at
+ * install (fallback: the files RomM lists for the rom, at their install
+ * placement) and the folders left empty; anything else in a game folder, and
+ * saves/states, are never touched. Otherwise only `.part` files are deleted.
+ *
+ * Pushes add the [Provenance.MANUAL] marker; collection sync installs and
+ * removes through [installRom]/[uninstallRom] ([CollectionBackend]).
  *
  * After a successful install (`done`/`already_installed`, once reported), when
  * [esdeTarget] yields a folder, RomM's scraped media and metadata are exported
@@ -103,7 +136,11 @@ class InstallClient(
     private val logger: (String) -> Unit = { println("[romm-sync] $it") },
     /** ES-DE folders to export media/gamelists into after an install; null = off. Read per install. */
     private val esdeTarget: () -> EsdeTarget? = { null },
-) {
+    /** Provenance markers per rom; null = not tracked. */
+    private val provenance: RomProvenanceStore? = null,
+    /** Launcher cleanup after an uninstall removed a rom's files. */
+    private val gameRemover: LauncherGameRemover? = null,
+) : CollectionBackend {
     private val baseClient: OkHttpClient = httpClient ?: OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.MINUTES)
@@ -183,7 +220,7 @@ class InstallClient(
     }
 
     /**
-     * Claims every pending request and installs each one in turn. Leaves requests
+     * Claims every pending request and handles each one in turn. Leaves requests
      * pending (no claim) while downloads are not allowed or no roms root is set.
      */
     suspend fun drainNow() {
@@ -201,15 +238,119 @@ class InstallClient(
             log("claim: ${requests.size} pending")
             for (request in requests) {
                 if (cancelledIds.remove(request.id)) {
-                    log("install ${request.id}: cancelled before start")
+                    log("${request.action} ${request.id}: cancelled before start")
                     continue
                 }
-                if (!downloadsAllowed()) {
-                    log("downloads paused; remaining requests stay queued")
-                    break
+                when (request.action) {
+                    ACTION_UNINSTALL -> runUninstall(request, root)
+                    ACTION_INSTALL -> {
+                        if (!downloadsAllowed()) {
+                            log("downloads paused; remaining requests stay queued")
+                            break
+                        }
+                        runInstall(request, root)
+                    }
+                    else -> report(request.id, STATUS_FAILED, "unsupported action ${request.action}")
                 }
-                runInstall(request, root)
             }
+        }
+    }
+
+    // ── Collection sync backend ─────────────────────────────────────────
+
+    override suspend fun fetchCollections(): List<DeviceCollection> =
+        api.getDeviceCollections(deviceId).map {
+            DeviceCollection(it.kind, it.id, it.name, it.description, it.romIds, it.coverUrl, it.updatedAt)
+        }
+
+    /**
+     * Installs [romId] like a push (same placement, hash checks, library record and
+     * ES-DE export) without a RomM request, adding [marker] to its provenance.
+     * Waits for a running drain; listener callbacks use the request id `local-<romId>`.
+     */
+    override suspend fun installRom(romId: Int, marker: String): LocalInstallResult {
+        val requestId = "$LOCAL_REQUEST_PREFIX$romId"
+        val outcome = drainMutex.withLock {
+            if (!downloadsAllowed()) return LocalInstallResult(STATUS_FAILED, "downloads not allowed now")
+            val root = romsRoot()?.takeIf { it.isNotBlank() }
+                ?: return LocalInstallResult(STATUS_FAILED, "no roms root configured")
+            listener.onInstallStarted(requestId, romId)
+            val parts = mutableListOf<File>()
+            try {
+                performInstall(requestId, romId, emptyList(), root, parts, marker)
+            } catch (e: CancellationException) {
+                deleteParts(parts)
+                throw e
+            } catch (e: Exception) {
+                deleteParts(parts)
+                Outcome(STATUS_FAILED, describe(e), emptyList())
+            }
+        }
+        log("install rom $romId ($marker): ${outcome.status}${outcome.reason?.let { " ($it)" } ?: ""}")
+        listener.onInstallFinished(requestId, romId, outcome.status, outcome.reason, outcome.files)
+        enqueueExport(requestId, outcome)
+        return LocalInstallResult(outcome.status, outcome.reason, outcome.files)
+    }
+
+    /** Uninstalls [romId] without a RomM request (collection sync); same rules as `action=uninstall`. */
+    override suspend fun uninstallRom(romId: Int): LocalUninstallResult {
+        val result = drainMutex.withLock { uninstallSafely(romId, romsRoot()?.takeIf { it.isNotBlank() }) }
+        log("uninstall rom $romId: ${result.status}${result.reason?.let { " ($it)" } ?: ""}")
+        listener.onUninstallFinished(null, romId, result.status, result.reason, result.files)
+        return result
+    }
+
+    /**
+     * Fetches the collection's cover into [dir] as `<kind>-<id>-<url hash>.<ext>`,
+     * reusing the cached file while the cover URL is unchanged and dropping older
+     * covers of the same collection. The token is only sent to the RomM host.
+     */
+    override suspend fun downloadCover(collection: DeviceCollection, dir: File): File? = withContext(Dispatchers.IO) {
+        val raw = collection.coverUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return@withContext null
+        val base = baseUrl.trimEnd('/').plus('/').toHttpUrlOrNull() ?: return@withContext null
+        val url = (raw.toHttpUrlOrNull() ?: base.resolve(raw.trimStart('/'))) ?: return@withContext null
+        val prefix = "${collection.kind}-${collection.id}-"
+        val stem = prefix + sha1(raw).take(12)
+        dir.listFiles()?.firstOrNull { it.isFile && it.name.startsWith("$stem.") && it.length() > 0 }?.let { return@withContext it }
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            log("collections: cannot create ${dir.path}")
+            return@withContext null
+        }
+        val request = Request.Builder().url(url).apply {
+            if (url.host == base.host) header("Authorization", "Bearer $token")
+        }.build()
+        try {
+            baseClient.newCall(request).execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful || body == null) {
+                    log("collections: cover for ${collection.key}: HTTP ${response.code}")
+                    return@withContext null
+                }
+                val ext = url.pathSegments.lastOrNull()?.substringAfterLast('.', "")?.lowercase()
+                    ?.takeIf { it in COVER_EXTENSIONS }
+                    ?: when (body.contentType()?.subtype?.lowercase()) {
+                        "jpeg", "jpg" -> "jpg"
+                        "webp" -> "webp"
+                        "gif" -> "gif"
+                        else -> "png"
+                    }
+                val target = File(dir, "$stem.$ext")
+                val part = File(dir, "${target.name}$PART_SUFFIX")
+                try {
+                    body.byteStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+                    if (part.length() == 0L) return@withContext null
+                    moveIntoPlace(part, target)
+                } finally {
+                    if (part.exists()) part.delete()
+                }
+                dir.listFiles()?.filter { it.name.startsWith(prefix) && it != target }?.forEach { it.delete() }
+                target
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("collections: cover for ${collection.key}: ${describe(e)}")
+            null
         }
     }
 
@@ -230,6 +371,8 @@ class InstallClient(
             log("socket connected")
             listener.onConnection(true, null)
             trigger()
+            // Subscriptions may have changed while disconnected.
+            notifyCollectionsChanged("connect")
         }
         s.on(Socket.EVENT_DISCONNECT) { args ->
             val reason = args.firstOrNull()?.toString()
@@ -256,6 +399,10 @@ class InstallClient(
         s.on(EVENT_INSTALL_CANCELLED) { args ->
             requestIdOf(args.firstOrNull())?.let(::cancelRequest)
         }
+        s.on(EVENT_COLLECTIONS_CHANGED) {
+            log("collections changed")
+            notifyCollectionsChanged("event")
+        }
         s.connect()
         return s
     }
@@ -264,6 +411,14 @@ class InstallClient(
     private fun reconnectIfIdle() {
         val s = synchronized(lock) { socket } ?: return
         if (!authRejected && !s.connected() && !s.isActive) s.connect()
+    }
+
+    private fun notifyCollectionsChanged(reason: String) {
+        try {
+            listener.onCollectionsChanged(reason)
+        } catch (e: Exception) {
+            log("collections: listener failed: ${describe(e)}")
+        }
     }
 
     private fun cancelRequest(requestId: String) {
@@ -301,7 +456,8 @@ class InstallClient(
         log("install ${request.id}: rom ${request.romId}")
         val parts = mutableListOf<File>()
         val outcome = try {
-            performInstall(request, root, parts).also { finish(request, it.status, it.reason, it.files) }
+            performInstall(request.id, request.romId, request.fileIds, root, parts, Provenance.MANUAL)
+                .also { finish(request, it.status, it.reason, it.files) }
         } catch (e: CancellationException) {
             deleteParts(parts)
             log("install ${request.id}: aborted")
@@ -317,7 +473,138 @@ class InstallClient(
             return
         }
         // Reported first so RomM shows the result promptly; media follows off the drain path.
-        enqueueExport(request, outcome)
+        enqueueExport(request.id, outcome)
+    }
+
+    // ── Uninstall ───────────────────────────────────────────────────────
+
+    private suspend fun runUninstall(request: InstallRequestDto, root: String) {
+        log("uninstall ${request.id}: rom ${request.romId}")
+        val result = uninstallSafely(request.romId, root)
+        val reason = result.reason?.take(MAX_REASON_LENGTH)
+        log("uninstall ${request.id}: ${result.status}${reason?.let { " ($it)" } ?: ""}")
+        report(request.id, result.status, reason)
+        listener.onUninstallFinished(request.id, request.romId, result.status, reason, result.files)
+    }
+
+    private suspend fun uninstallSafely(romId: Int, root: String?): LocalUninstallResult = try {
+        uninstall(romId, root)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        LocalUninstallResult(STATUS_FAILED, describe(e))
+    }
+
+    /** The files to delete for a rom and the platform folder holding them. */
+    private class Removal(val platformDir: File, val primary: File, val files: List<File>, val recorded: Boolean)
+
+    /**
+     * Deletes the rom's files and the folders they leave empty, then cleans the
+     * launcher and forgets the rom (library record + provenance). Only files
+     * inside the rom's platform folder are ever deleted.
+     */
+    private suspend fun uninstall(romId: Int, root: String?): LocalUninstallResult {
+        val removal = locateRemoval(romId, root)
+        if (removal == null) {
+            forget(romId)
+            return LocalUninstallResult(STATUS_NOT_INSTALLED, "not on this device")
+        }
+        val platformDir = removal.platformDir.absoluteFile.normalize()
+        val outside = removal.files.firstOrNull { !it.absoluteFile.normalize().startsWith(platformDir) || it.absoluteFile.normalize() == platformDir }
+        if (outside != null) {
+            return LocalUninstallResult(STATUS_FAILED, "refusing to delete ${outside.path}: outside ${platformDir.path}")
+        }
+        val deleted = mutableListOf<File>()
+        val failures = mutableListOf<File>()
+        withContext(Dispatchers.IO) {
+            for (file in removal.files) {
+                if (!file.isFile) continue
+                if (file.delete()) deleted += file else failures += file
+            }
+            pruneEmptyDirs(removal, platformDir)
+        }
+        if (failures.isNotEmpty()) {
+            val more = if (failures.size > 1) " (+${failures.size - 1} more)" else ""
+            return LocalUninstallResult(STATUS_FAILED, "cannot delete ${failures.first().path}$more", deleted)
+        }
+        if (removal.primary.isDirectory) {
+            log("uninstall rom $romId: kept ${removal.primary.path} (holds files that are not part of the rom)")
+        }
+        if (deleted.isNotEmpty() || removal.recorded) {
+            try {
+                gameRemover?.onRomRemoved(romId, platformDir.name, removal.files)
+            } catch (e: Exception) {
+                log("uninstall rom $romId: launcher cleanup failed: ${describe(e)}")
+            }
+        }
+        forget(romId)
+        return if (deleted.isEmpty()) {
+            LocalUninstallResult(STATUS_NOT_INSTALLED, "files already gone")
+        } else {
+            LocalUninstallResult(STATUS_DONE, null, deleted)
+        }
+    }
+
+    /** Recorded files first; else (or when none were recorded) the install plan from RomM's file list. */
+    private suspend fun locateRemoval(romId: Int, root: String?): Removal? {
+        val recorded = try {
+            store.installed(romId)
+        } catch (e: Exception) {
+            log("uninstall rom $romId: cannot read library record: ${describe(e)}")
+            null
+        }
+        if (recorded != null) {
+            val platformDir = recorded.primary.absoluteFile.parentFile ?: return null
+            val files = recorded.files.ifEmpty {
+                when {
+                    recorded.primary.isFile -> listOf(recorded.primary)
+                    else -> plannedFiles(romId, platformDir) ?: throw InstallFailure(
+                        "no file list recorded for ${recorded.primary.path} and RomM has none",
+                    )
+                }
+            }
+            return Removal(platformDir, recorded.primary, files, recorded = true)
+        }
+        if (root == null) return null
+        val rom = try {
+            api.getRomDetail(romId)
+        } catch (e: HttpException) {
+            if (e.code() == 404) return null
+            throw e
+        }
+        val folder = PlatformFolders.folderFor(rom.platformSlug) ?: return null
+        val plan = runCatching { planInstall(rom, emptyList(), File(root, folder)) }.getOrNull() ?: return null
+        return Removal(File(root, folder), plan.primary, plan.targets.map { it.target }, recorded = false)
+    }
+
+    private suspend fun plannedFiles(romId: Int, platformDir: File): List<File>? {
+        val rom = api.getRomDetail(romId)
+        return runCatching { planInstall(rom, emptyList(), platformDir).targets.map { it.target } }.getOrNull()
+    }
+
+    /** Removes folders under [platformDir] that the deletion left empty, deepest first. */
+    private fun pruneEmptyDirs(removal: Removal, platformDir: File) {
+        val dirs = removal.files.flatMap { file ->
+            generateSequence(file.absoluteFile.normalize().parentFile) { it.parentFile }
+                .takeWhile { it != platformDir && it.startsWith(platformDir) }
+                .toList()
+        }.toSet().sortedByDescending { it.path.length }
+        for (dir in dirs) {
+            if (dir.isDirectory && dir.list().isNullOrEmpty()) dir.delete()
+        }
+    }
+
+    private fun forget(romId: Int) {
+        try {
+            store.forgetInstalled(romId)
+        } catch (e: Exception) {
+            log("uninstall rom $romId: cannot drop library record: ${describe(e)}")
+        }
+        try {
+            provenance?.setMarkers(romId, emptySet())
+        } catch (e: Exception) {
+            log("uninstall rom $romId: cannot clear provenance: ${describe(e)}")
+        }
     }
 
     private class ExportJob(
@@ -332,7 +619,7 @@ class InstallClient(
      * Queues the media/metadata export for a successful install. Exports run one
      * at a time on a worker independent of [start], so [drainNow] never waits for them.
      */
-    private fun enqueueExport(request: InstallRequestDto, outcome: Outcome) {
+    private fun enqueueExport(requestId: String, outcome: Outcome) {
         val rom = outcome.rom ?: return
         val primary = outcome.primary ?: return
         val folder = outcome.folder ?: return
@@ -351,7 +638,7 @@ class InstallClient(
                 exports = channel
             }
         }
-        queue.trySend(ExportJob(request.id, rom, primary, folder, target))
+        queue.trySend(ExportJob(requestId, rom, primary, folder, target))
     }
 
     private suspend fun exportMetadata(job: ExportJob) {
@@ -385,19 +672,22 @@ class InstallClient(
     )
 
     private suspend fun performInstall(
-        request: InstallRequestDto,
+        progressId: String,
+        romId: Int,
+        fileIds: List<Int>,
         root: String,
         parts: MutableList<File>,
+        marker: String,
     ): Outcome {
-        val rom = api.getRomDetail(request.romId)
+        val rom = api.getRomDetail(romId)
         val folder = PlatformFolders.folderFor(rom.platformSlug)
             ?: return Outcome(STATUS_FAILED, "unsupported platform ${rom.platformSlug}", emptyList())
-        val plan = planInstall(rom, request.fileIds, File(root, folder))
+        val plan = planInstall(rom, fileIds, File(root, folder))
         val installedFiles = plan.targets.map { it.target }
 
         val intact = withContext(Dispatchers.IO) { plan.targets.map { isIntact(it) } }
         if (intact.all { it }) {
-            record(rom, plan, installedFiles)
+            record(rom, plan, installedFiles, marker, STATUS_ALREADY_INSTALLED)
             return Outcome(STATUS_ALREADY_INSTALLED, null, installedFiles, rom, plan.primary, folder)
         }
 
@@ -415,7 +705,7 @@ class InstallClient(
             val part = File(target.target.path + PART_SUFFIX)
             parts += part
             val base = doneBytes
-            download(target.file, part) { bytes -> listener.onInstallProgress(request.id, base + bytes, total) }
+            download(target.file, part) { bytes -> listener.onInstallProgress(progressId, base + bytes, total) }
             doneBytes += target.file.fileSizeBytes
             downloaded += part to target.target
         }
@@ -423,12 +713,29 @@ class InstallClient(
             for ((part, target) in downloaded) moveIntoPlace(part, target)
         }
         parts.clear()
-        listener.onInstallProgress(request.id, total, total)
-        record(rom, plan, installedFiles)
+        listener.onInstallProgress(progressId, total, total)
+        record(rom, plan, installedFiles, marker, STATUS_DONE)
         return Outcome(STATUS_DONE, null, installedFiles, rom, plan.primary, folder)
     }
 
-    private fun record(rom: RomDetailDto, plan: InstallPlan, files: List<File>) {
+    /**
+     * Adds [marker] to the rom's provenance, then records it in the library. A
+     * collection install that finds a rom already on disk without provenance
+     * (present before collection sync) also gets [Provenance.MANUAL], so
+     * collection sync never deletes it.
+     */
+    private fun record(rom: RomDetailDto, plan: InstallPlan, files: List<File>, marker: String, status: String) {
+        provenance?.let { markers ->
+            try {
+                val current = markers.markers(rom.id)
+                val preExisting = marker != Provenance.MANUAL && current.isEmpty() &&
+                    (status == STATUS_ALREADY_INSTALLED || store.installed(rom.id) != null)
+                val next = current + marker + (if (preExisting) setOf(Provenance.MANUAL) else emptySet())
+                if (next != current) markers.setMarkers(rom.id, next)
+            } catch (e: Exception) {
+                log("install: could not record provenance of rom ${rom.id}: ${describe(e)}")
+            }
+        }
         try {
             store.recordInstalled(rom, plan.primary, files)
         } catch (e: Exception) {
@@ -506,14 +813,19 @@ class InstallClient(
     private suspend fun finish(request: InstallRequestDto, status: String, reason: String?, files: List<File>) {
         val trimmed = reason?.take(MAX_REASON_LENGTH)
         log("install ${request.id}: $status${trimmed?.let { " ($it)" } ?: ""}")
+        report(request.id, status, trimmed)
+        listener.onInstallFinished(request.id, request.romId, status, trimmed, files)
+    }
+
+    /** Ends a RomM request; a failed report is logged (RomM expires the request). */
+    private suspend fun report(requestId: String, status: String, reason: String?) {
         try {
-            api.reportInstall(deviceId, request.id, InstallReportRequest(status, trimmed))
+            api.reportInstall(deviceId, requestId, InstallReportRequest(status, reason?.take(MAX_REASON_LENGTH)))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log("install ${request.id}: report failed: ${describe(e)}")
+            log("request $requestId: report failed: ${describe(e)}")
         }
-        listener.onInstallFinished(request.id, request.romId, status, trimmed, files)
     }
 
     private fun deleteParts(parts: List<File>) {
@@ -526,12 +838,20 @@ class InstallClient(
         const val STATUS_DONE = "done"
         const val STATUS_ALREADY_INSTALLED = "already_installed"
         const val STATUS_FAILED = "failed"
+        const val STATUS_NOT_INSTALLED = "not_installed"
         const val MAX_REASON_LENGTH = 500
+
+        const val ACTION_INSTALL = "install"
+        const val ACTION_UNINSTALL = "uninstall"
+
+        /** Request id prefix of local (collection sync) installs in listener callbacks. */
+        const val LOCAL_REQUEST_PREFIX = "local-"
 
         const val SOCKET_PATH = "/ws/socket.io"
         const val NAMESPACE = "/devices"
         const val EVENT_INSTALL_QUEUED = "install:queued"
         const val EVENT_INSTALL_CANCELLED = "install:cancelled"
+        const val EVENT_COLLECTIONS_CHANGED = "collections:changed"
 
         private const val DRAIN_INTERVAL_MS = 60_000L
         private const val EXPORT_TIMEOUT_MS = 5 * 60_000L
@@ -541,6 +861,10 @@ class InstallClient(
         private const val BUFFER_SIZE = 256 * 1024
         private const val PROGRESS_STEP_BYTES = 1L shl 20
         private val AUTH_REFUSALS = setOf("unauthorized", "disabled")
+        private val COVER_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp", "gif")
+
+        private fun sha1(text: String): String =
+            MessageDigest.getInstance("SHA-1").digest(text.toByteArray(Charsets.UTF_8)).toHex()
 
         /**
          * Socket.io options for RomM's `/devices` namespace. WebSocket only: RomM runs several

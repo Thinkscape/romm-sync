@@ -116,4 +116,25 @@ class EsdeGamelistTest {
     fun `unrecognised file is not overwritten`() {
         EsdeGamelist.upsert("not xml at all", listOf(EsdeGameEntry("./a.nes", emptyMap())))
     }
+
+    @Test
+    fun `remove drops the game, entries inside its folder and nothing else`() {
+        val text = "<?xml version=\"1.0\"?>\n<gameList>\n" +
+            "\t<game>\n\t\t<path>./Keep.nes</path>\n\t\t<playcount>3</playcount>\n\t</game>\n" +
+            "\t<game>\n\t\t<path>./Drop &amp; Go.nes</path>\n\t</game>\n" +
+            "\t<folder>\n\t\t<path>./Game</path>\n\t</folder>\n" +
+            "\t<game>\n\t\t<path>./Game/disc1.cue</path>\n\t</game>\n" +
+            "\t<game>\n\t\t<path>./Games/other.cue</path>\n\t</game>\n" +
+            "</gameList>\n"
+
+        val pruned = EsdeGamelist.remove(text, listOf("./Drop & Go.nes", "./Game"))
+
+        assertEquals(
+            "<?xml version=\"1.0\"?>\n<gameList>\n" +
+                "\t<game>\n\t\t<path>./Keep.nes</path>\n\t\t<playcount>3</playcount>\n\t</game>\n" +
+                "\t<game>\n\t\t<path>./Games/other.cue</path>\n\t</game>\n" +
+                "</gameList>\n",
+            pruned,
+        )
+    }
 }

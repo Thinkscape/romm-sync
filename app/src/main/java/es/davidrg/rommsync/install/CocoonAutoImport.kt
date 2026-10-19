@@ -50,9 +50,9 @@ object CocoonAutoImport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var settleJob: Job? = null
 
-    /** Called after every successful push install. */
+    /** Called after every push install and every uninstall (Rescan Games also drops removed games). */
     @Synchronized
-    fun onGameInstalled(context: Context) {
+    fun onLibraryChanged(context: Context) {
         val app = context.applicationContext
         val settings = (app as? RomMSyncApplication)?.container?.settingsDataStore ?: return
         if (!settings.getCocoonAutoImportEnabledBlocking() || !isCocoonInstalled(app)) return
@@ -107,6 +107,10 @@ object CocoonAutoImport {
 
     /** Pending, settled, and not backing off after a failure for the same generation. */
     fun isDue(context: Context): Boolean = marker(context).isDue()
+
+    /** Installs are pending and still inside the settle window (their rescan has not become due yet). */
+    fun isSettling(context: Context): Boolean =
+        marker(context).let { it.isPending && System.currentTimeMillis() - it.lastInstallAt < SETTLE_MS }
 
     /** Generation a flow captures at start and hands to [clearPending] / [recordFailure]. */
     fun pendingGeneration(context: Context): Long = marker(context).generation

@@ -83,7 +83,10 @@ class DevicePairingTest {
         assertEquals("/api/devices/dev-1", put.path)
         assertEquals("Bearer rmm_token", put.getHeader("Authorization"))
         val putBody = put.body.readUtf8()
-        assertTrue(putBody, putBody.contains("\"capabilities\":{\"remote_install\":true}"))
+        assertTrue(
+            putBody,
+            putBody.contains("\"capabilities\":{\"remote_install\":true,\"remote_uninstall\":true,\"collection_sync\":true}"),
+        )
         assertTrue(putBody.contains("\"sync_mode\":\"api\""))
         assertTrue(putBody.contains("\"client\":\"romm-sync\""))
         assertTrue(putBody.contains("\"client_version\":\"1.0.0-thinkscape.1\""))

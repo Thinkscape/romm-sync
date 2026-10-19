@@ -1,6 +1,7 @@
 package es.davidrg.rommsync.desktop
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -138,6 +139,49 @@ class LauncherRefreshTest {
         val flatpakLike = esde.copy(cmdline = listOf("/usr/bin/es-de", "--home", "/x"))
         assertEquals(listOf("/usr/bin/es-de", "--home", "/x"), LauncherRefresher.relaunchCommand(flatpakLike, emptyMap()))
         assertNull(LauncherRefresher.relaunchCommand(esde.copy(cmdline = emptyList()), emptyMap()))
+    }
+
+    // ── ES-DE file edits ────────────────────────────────────────────────
+
+    @Test
+    fun `edit runs at once when es-de is not running`() {
+        val sys = FakeSystem(listOf(steam), emptyMap())
+        var edited = false
+        val outcome = LauncherRefresher(sys).refresh(30_000, edit = { edited = true })
+        assertTrue(edited)
+        assertEquals(RefreshOutcome.Refreshed("edited while es-de not running"), outcome)
+        assertTrue(sys.spawned.isEmpty())
+    }
+
+    @Test
+    fun `edit waits while a game runs`() {
+        val sh = ProcInfo(60000, esde.pid, "sh", 20_000)
+        val sys = FakeSystem(desktopTree + sh, mapOf(esde.pid to desktopEnv))
+        var edited = false
+        val outcome = LauncherRefresher(sys).refresh(30_000, edit = { edited = true })
+        assertEquals(RefreshOutcome.Deferred("game running: sh"), outcome)
+        assertFalse(edited)
+        assertTrue(sys.terminated.isEmpty())
+    }
+
+    @Test
+    fun `edit runs between stopping and relaunching an idle es-de even if it started after the install`() {
+        val sys = FakeSystem(desktopTree, mapOf(esde.pid to desktopEnv))
+        var esdeAliveDuringEdit: Boolean? = null
+        val outcome = LauncherRefresher(sys).refresh(lastInstallAtMs = 5_000, edit = { esdeAliveDuringEdit = sys.isAlive(esde.pid) })
+        assertEquals(RefreshOutcome.Refreshed("restart"), outcome)
+        assertEquals(false, esdeAliveDuringEdit)
+        assertEquals(1, sys.spawned.size)
+    }
+
+    @Test
+    fun `edit with refresh disabled waits for es-de to exit`() {
+        val sys = FakeSystem(desktopTree, mapOf(esde.pid to desktopEnv))
+        var edited = false
+        val outcome = LauncherRefresher(sys).refresh(30_000, edit = { edited = true }, mayRestart = false)
+        assertTrue(outcome is RefreshOutcome.Deferred)
+        assertFalse(edited)
+        assertTrue(sys.terminated.isEmpty())
     }
 
     // ── /proc parsing ───────────────────────────────────────────────────

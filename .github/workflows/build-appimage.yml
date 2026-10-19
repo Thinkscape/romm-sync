@@ -127,6 +127,22 @@ jobs:
           ARCH="${{ matrix.arch }}"
           export ARCH
           /tmp/appimagetool AppDir "RomM-Sync-${VERSION}-linux-${{ matrix.arch }}.AppImage"
+          sha256sum "RomM-Sync-${VERSION}-linux-${{ matrix.arch }}.AppImage" > "RomM-Sync-${VERSION}-linux-${{ matrix.arch }}.AppImage.sha256"
+
+      # Only attach to a release that does not have this AppImage yet (the APK
+      # workflow created it in this push); never replace published assets.
+      - name: Guard against replacing a published AppImage
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: RomM-Sync-${{ steps.version.outputs.tag }}-linux-${{ matrix.arch }}.AppImage
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qxF "$ASSET"; then
+            echo "::notice::${ASSET} already published; build only."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -135,6 +151,7 @@ jobs:
           path: RomM-Sync-*-linux-${{ matrix.arch }}.AppImage
 
       - name: Attach to release
+        if: steps.guard.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -155,4 +172,6 @@ jobs:
 
             - **Android:** Settings → Updates → *Check for updates*, or download the attached APK and open it — it installs over the previous version without losing data.
             - **Linux:** download the AppImage for your architecture, give it execute permission (`chmod +x`) and run it. Replaces the previous file.
-          files: RomM-Sync-*-linux-${{ matrix.arch }}.AppImage
+          files: |
+            RomM-Sync-*-linux-${{ matrix.arch }}.AppImage
+            RomM-Sync-*-linux-${{ matrix.arch }}.AppImage.sha256

@@ -31,6 +31,7 @@ class AppContainer(private val appContext: Context) {
     val romRepository = RomRepository(
         platformDao = database.platformDao(),
         romDao = database.romDao(),
+        collectionSyncDao = database.collectionSyncDao(),
     )
 
     val downloadManager = DownloadManager(appContext)
@@ -59,6 +60,11 @@ class AppContainer(private val appContext: Context) {
     /** Records push-installed roms in the downloaded-rom table so library and save sync see them. */
     val installedRomStore: es.davidrg.rommsync.core.install.InstalledRomStore by lazy {
         es.davidrg.rommsync.data.install.RoomInstalledRomStore(database.romDao())
+    }
+
+    /** Provenance markers + collection state for collection sync (RomM "Sync to device"). */
+    val collectionSyncStore: es.davidrg.rommsync.data.install.RoomCollectionSyncStore by lazy {
+        es.davidrg.rommsync.data.install.RoomCollectionSyncStore(database.collectionSyncDao())
     }
 
     /** RomM device pairing; its client carries no Authorization header (init/token are open endpoints). */

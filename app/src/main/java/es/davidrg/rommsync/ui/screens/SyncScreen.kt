@@ -1,5 +1,8 @@
 package es.davidrg.rommsync.ui.screens
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -61,7 +64,9 @@ import es.davidrg.rommsync.RomMSyncApplication
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.data.local.SettingsDataStore
 import es.davidrg.rommsync.data.sync.ConflictInfo
+import es.davidrg.rommsync.data.sync.EmulatorDocumentProviders
 import es.davidrg.rommsync.data.sync.FailedOpInfo
+import es.davidrg.rommsync.data.sync.SafTreeStore
 import es.davidrg.rommsync.data.sync.SyncState
 import es.davidrg.rommsync.ui.components.FolderPickerDialog
 import es.davidrg.rommsync.ui.viewmodel.SaveAccessItem
@@ -120,6 +125,26 @@ fun SyncScreen() {
     var showFolderPicker by remember { mutableStateOf(false) }
     // Save folder being granted through the folder picker (SAF), null = none.
     var grantPath by remember { mutableStateOf<String?>(null) }
+
+    // Emulators that expose their user dir through their own DocumentsProvider
+    // (Dolphin, Eden): the system selector opens straight on that provider's
+    // root; the persisted grant covers every save folder below it.
+    val providerGrantLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            SafTreeStore.pathFromTreeUri(uri)?.let { path ->
+                SafTreeStore(context).put(path, uri.toString())
+            }
+        }
+        viewModel.refreshSaveAccess()
+    }
 
     LaunchedEffect(effectiveRetroArch) {
         val effective = effectiveRetroArch ?: return@LaunchedEffect
@@ -289,7 +314,13 @@ fun SyncScreen() {
                         )
                         saveAccess.forEach { access ->
                             Spacer(modifier = Modifier.height(8.dp))
-                            SaveAccessRow(access, onGrant = { grantPath = access.path })
+                            SaveAccessRow(access, onGrant = {
+                                if (EmulatorDocumentProviders.forPath(access.path) != null) {
+                                    providerGrantLauncher.launch(SafTreeStore.initialTreeUri(access.path))
+                                } else {
+                                    grantPath = access.path
+                                }
+                            })
                         }
                     }
                 }
@@ -559,6 +590,8 @@ private fun SaveAccessRow(access: SaveAccessItem, onGrant: () -> Unit) {
                 when {
                     access.usable -> access.path
                     access.blockedBySystem -> tr("android.sync.access.blocked", access.emulatorName, access.path)
+                    EmulatorDocumentProviders.forPath(access.path) != null ->
+                        tr("android.sync.access.provider", access.path, access.emulatorName)
                     else -> tr("android.sync.access.unreadable", access.path)
                 },
                 style = MaterialTheme.typography.bodySmall,

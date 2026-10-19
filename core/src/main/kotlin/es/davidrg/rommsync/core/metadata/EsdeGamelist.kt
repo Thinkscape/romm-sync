@@ -37,6 +37,7 @@ object EsdeGamelist {
     private val INVALID_XML_CHARS = Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]")
 
     private val locks = ConcurrentHashMap<String, Any>()
+    private val ENTRY_BLOCK = Regex("""<(game|folder)(\s[^>]*)?>[\s\S]*?</\1>""")
 
     /**
      * Upserts [entries] into [file] (created with its folders when absent) and
@@ -52,6 +53,51 @@ object EsdeGamelist {
             if (merged == existing) return
             writeAtomically(file, merged)
         }
+    }
+
+    /**
+     * Removes from [file] every `<game>`/`<folder>` whose path is one of [paths]
+     * or lies under one of them (`./Game` also drops `./Game/disc1.cue`), and
+     * writes it atomically. Returns true when something was removed; a missing
+     * file is a no-op.
+     */
+    fun removeFromFile(file: File, paths: Collection<String>): Boolean {
+        if (paths.isEmpty() || !file.isFile) return false
+        val key = file.absoluteFile.normalize().path
+        synchronized(locks.computeIfAbsent(key) { Any() }) {
+            val existing = file.readText(Charsets.UTF_8)
+            val pruned = remove(existing, paths)
+            if (pruned == existing) return false
+            writeAtomically(file, pruned)
+            return true
+        }
+    }
+
+    /** Pure removal for [removeFromFile]: the document without the matching blocks (and their line). */
+    fun remove(existing: String, paths: Collection<String>): String {
+        val targets = paths.map { normalizePath(it).trimEnd('/') }.filter { it.isNotEmpty() }.toSet()
+        if (targets.isEmpty()) return existing
+        val out = StringBuilder()
+        var last = 0
+        for (block in ENTRY_BLOCK.findAll(existing)) {
+            val path = PATH_FIELD.find(block.value)?.groupValues?.get(1)?.let { normalizePath(decode(it.trim())) } ?: continue
+            if (targets.none { path == it || path.startsWith("$it/") }) continue
+            // Take the block's own line (indent + trailing newline) when nothing else shares it.
+            var start = block.range.first
+            var end = block.range.last + 1
+            val lineStart = existing.lastIndexOf('\n', start - 1) + 1
+            if (lineStart >= last && existing.substring(lineStart, start).isBlank()) {
+                val lineEnd = existing.indexOf('\n', end).let { if (it < 0) existing.length else it }
+                if (existing.substring(end, lineEnd).isBlank()) {
+                    start = lineStart
+                    end = if (lineEnd < existing.length) lineEnd + 1 else lineEnd
+                }
+            }
+            out.append(existing, last, start)
+            last = end
+        }
+        out.append(existing, last, existing.length)
+        return out.toString()
     }
 
     /** Pure merge: returns the new document text for [existing] (null/blank = new file). */
@@ -136,7 +182,8 @@ object EsdeGamelist {
         .replace("<", "&lt;")
         .replace(">", "&gt;")
 
-    internal fun decode(value: String): String = ENTITY.replace(value) { m ->
+    /** Decodes the XML entities ES-DE writes (named and numeric). */
+    fun decode(value: String): String = ENTITY.replace(value) { m ->
         when (val e = m.groupValues[1]) {
             "amp" -> "&"
             "lt" -> "<"

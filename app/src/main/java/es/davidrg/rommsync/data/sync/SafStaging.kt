@@ -33,11 +33,8 @@ object SafStaging {
             staged.deleteRecursively()
             return null
         }
-        // Árbol realmente vacío: no aporta nada staged (findSaves vería lo mismo).
-        if (staged.walkTopDown().none { it.isFile }) {
-            staged.deleteRecursively()
-            return null
-        }
+        // An empty granted tree is still staged: a restore into it (first save
+        // of a game, empty Dolphin card folder) must reach the tree through commit().
         return StagedPath(original = path, dir = staged, viaSaf = true)
     }
 

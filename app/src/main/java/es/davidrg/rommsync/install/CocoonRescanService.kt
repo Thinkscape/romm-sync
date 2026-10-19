@@ -58,7 +58,9 @@ class CocoonRescanService : AccessibilityService() {
     private var flowJob: Job? = null
     private var receiverRegistered = false
     /** Display the flow currently works on (Cocoon can use both of the Thor's screens). */
-    private var activeDisplay = Display.DEFAULT_DISPLAY
+    internal var activeDisplay = Display.DEFAULT_DISPLAY
+    /** A non-Cocoon package the running flow opened itself (the system file picker); not a blocker. */
+    internal var allowedForeignPackage: String? = null
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -75,12 +77,14 @@ class CocoonRescanService : AccessibilityService() {
         ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiverRegistered = true
         setContentEvents(false)
+        CocoonFolderDebugTrigger.register(this)
         Log.i(TAG, "service connected (Cocoon ${CocoonAutoImport.cocoonVersion(this)})")
-        if (CocoonAutoImport.isDue(this)) scheduleEvaluate(FOREGROUND_SETTLE_MS)
+        if (anyWorkDue()) scheduleEvaluate(FOREGROUND_SETTLE_MS)
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        CocoonFolderDebugTrigger.unregister(this)
         if (receiverRegistered) {
             unregisterReceiver(screenReceiver)
             receiverRegistered = false
@@ -94,7 +98,7 @@ class CocoonRescanService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val type = event.eventType
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            if (flowJob?.isActive != true && CocoonAutoImport.isDue(this)) {
+            if (flowJob?.isActive != true && anyWorkDue()) {
                 scheduleEvaluate(FOREGROUND_SETTLE_MS)
             }
         }
@@ -105,6 +109,13 @@ class CocoonRescanService : AccessibilityService() {
         scope.launch { scheduleEvaluate(0L) }
     }
 
+    /** Called by [CocoonCollections] when collection folder work was recorded. */
+    fun onFolderWorkPending() {
+        scope.launch { scheduleEvaluate(FOREGROUND_SETTLE_MS) }
+    }
+
+    private fun anyWorkDue(): Boolean = CocoonAutoImport.isDue(this) || CocoonCollections.isDue(this)
+
     private fun scheduleEvaluate(delayMs: Long) {
         if (flowJob?.isActive == true) return
         evaluateJob?.cancel()
@@ -114,8 +125,21 @@ class CocoonRescanService : AccessibilityService() {
         }
     }
 
+    /**
+     * Starts the rescan when it is due, else the collection folder pass. Folder
+     * work waits while installs are still settling, so the rescan that brings the
+     * collection's new games into Cocoon runs first.
+     */
     private fun evaluate() {
-        if (!CocoonAutoImport.isDue(this) || flowJob?.isActive == true) return
+        if (flowJob?.isActive == true) return
+        val rescan = CocoonAutoImport.isDue(this)
+        val folderWork = !rescan && CocoonCollections.isDue(this)
+        if (folderWork && CocoonAutoImport.isSettling(this)) {
+            // Installs still settling: their rescan goes first (onRescanPending re-evaluates).
+            scheduleEvaluate(FOREGROUND_SETTLE_MS)
+            return
+        }
+        if (!rescan && !folderWork) return
         val settings = (application as RomMSyncApplication).container.settingsDataStore
         if (!settings.getCocoonAutoImportEnabledBlocking()) {
             CocoonAutoImport.discardPending(this)
@@ -123,12 +147,12 @@ class CocoonRescanService : AccessibilityService() {
         }
         val blocker = foregroundBlocker()
         if (blocker != null) {
-            Log.i(TAG, "rescan pending, waiting: $blocker")
+            Log.i(TAG, "${if (rescan) "rescan" else "collection folder work"} pending, waiting: $blocker")
             return
         }
-        flowJob = scope.launch { runFlow() }.also { job ->
-            // Installs that arrived while the flow ran keep the marker set: run again
-            // once this flow is gone (isDue still applies the settle and failure backoff).
+        flowJob = scope.launch { if (rescan) runFlow() else CocoonFolderFlow(this@CocoonRescanService).run() }.also { job ->
+            // Installs or folder work that arrived while the flow ran stay recorded: run again
+            // once this flow is gone (isDue applies the settle and failure backoffs).
             job.invokeOnCompletion { cause ->
                 if (cause == null) scope.launch { scheduleEvaluate(FOREGROUND_SETTLE_MS) }
             }
@@ -146,13 +170,15 @@ class CocoonRescanService : AccessibilityService() {
         cocoon.firstOrNull { it.title?.toString() != COCOON_HOME_TITLE }?.let {
             return "Cocoon shows '${it.title}' on display ${it.displayIdCompat()}, not its home screen"
         }
+        // Cocoon's folder dialogs and keyboard are drawn inside its home window.
+        if (CocoonFolderFlow(this).dialogOpen()) return "a Cocoon dialog is open"
         return null
     }
 
     // ── The flow ────────────────────────────────────────────────────────
 
-    private class FlowFailure(message: String) : Exception(message)
-    private class FlowAborted(message: String) : Exception(message)
+    internal class FlowFailure(message: String) : Exception(message)
+    internal class FlowAborted(message: String) : Exception(message)
 
     private suspend fun runFlow() {
         // Only installs up to this generation are covered by this flow's rescan.
@@ -208,14 +234,14 @@ class CocoonRescanService : AccessibilityService() {
         CocoonAutoImport.postFallback(this)
     }
 
-    private suspend inline fun <T> step(name: String, block: () -> T): T {
+    internal suspend fun <T> step(name: String, block: suspend () -> T): T {
         ensureCocoonInFront()
         Log.i(TAG, "step: $name")
         return block()
     }
 
     /** Stops (without touching the UI) when the user left Cocoon or the screen went off. */
-    private fun ensureCocoonInFront() {
+    internal fun ensureCocoonInFront() {
         if (!getSystemService(PowerManager::class.java).isInteractive) throw FlowAborted("screen turned off")
         busyApp()?.let { throw FlowAborted("foreground changed to $it") }
         if (cocoonWindows().isEmpty()) throw FlowAborted("Cocoon is no longer on screen")
@@ -226,7 +252,7 @@ class CocoonRescanService : AccessibilityService() {
      * ExternalDisplayActivity): work on the window that holds the Settings tile,
      * else the focused Cocoon window.
      */
-    private fun chooseHomeDisplay() {
+    internal fun chooseHomeDisplay() {
         val cocoon = cocoonWindows()
         val window = cocoon.firstOrNull { w -> w.root?.let { findSettingsTile(it) } != null }
             ?: cocoon.firstOrNull { it.isFocused }
@@ -242,7 +268,7 @@ class CocoonRescanService : AccessibilityService() {
         return true
     }
 
-    private fun cocoonAtHome(): Boolean {
+    internal fun cocoonAtHome(): Boolean {
         val cocoon = cocoonWindows()
         return cocoon.isNotEmpty() && cocoon.all { it.title?.toString() == COCOON_HOME_TITLE }
     }
@@ -300,7 +326,7 @@ class CocoonRescanService : AccessibilityService() {
         count
     }
 
-    private suspend fun returnHome() = step("return to the home screen") {
+    internal suspend fun returnHome() = step("return to the home screen") {
         repeat(3) {
             if (cocoonAtHome()) return@step
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -310,7 +336,7 @@ class CocoonRescanService : AccessibilityService() {
     }
 
     /** Best effort after a failure: close menus/dialogs/Settings until Cocoon's home screen shows. */
-    private suspend fun backOut() {
+    internal suspend fun backOut() {
         repeat(5) {
             if (busyApp() != null) return
             val cocoon = cocoonWindows()
@@ -328,33 +354,41 @@ class CocoonRescanService : AccessibilityService() {
 
     // ── Settings pod search on the home grid ───────────────────────────
 
-    private suspend fun focusSettingsPod(): Boolean {
+    private suspend fun focusSettingsPod(): Boolean = focusTile(SETTINGS_POD, cachePosition = true)
+
+    /**
+     * Moves the grid focus onto the tile named [target] with D-pad global actions,
+     * reading each focused tile's name from its context menu. [cachePosition]
+     * remembers where the Settings pod was found.
+     */
+    internal suspend fun focusTile(target: String, cachePosition: Boolean = false): Boolean {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val first = readFocusedName() ?: return false
+        // An unreadable tile is a failure, not proof that [target] is absent (callers act on absence).
+        val first = readFocusedName() ?: throw FlowFailure("could not read the focused tile")
         Log.i(TAG, "focused tile: $first")
-        if (first == SETTINGS_POD) return true
+        if (first == target) return true
 
         var topLeft = goTopLeft()
-        val cachedRow = prefs.getInt(KEY_ROW, -1)
-        val cachedCol = prefs.getInt(KEY_COL, -1)
+        val cachedRow = if (cachePosition) prefs.getInt(KEY_ROW, -1) else -1
+        val cachedCol = if (cachePosition) prefs.getInt(KEY_COL, -1) else -1
         if (cachedRow >= 0 && cachedCol >= 0) {
             repeat(cachedRow) { dpad(GLOBAL_ACTION_DPAD_DOWN) }
             repeat(cachedCol) { dpad(GLOBAL_ACTION_DPAD_RIGHT) }
             val name = readFocusedName()
             Log.i(TAG, "cached position ($cachedRow,$cachedCol): $name")
-            if (name == SETTINGS_POD) return true
+            if (name == target) return true
             topLeft = goTopLeft()
         }
-        var rowStart = topLeft ?: return false
+        var rowStart = topLeft ?: throw FlowFailure("could not read the first tile")
         for (row in 0 until MAX_ROWS) {
             var previous: String? = null
             var name: String? = rowStart
             var col = 0
             while (col < MAX_COLS) {
-                if (name == null) return false
-                if (name == SETTINGS_POD) {
-                    prefs.edit().putInt(KEY_ROW, row).putInt(KEY_COL, col).apply()
-                    Log.i(TAG, "Settings pod at ($row,$col)")
+                if (name == null) throw FlowFailure("could not read a tile")
+                if (name == target) {
+                    if (cachePosition) prefs.edit().putInt(KEY_ROW, row).putInt(KEY_COL, col).apply()
+                    Log.i(TAG, "'$target' at ($row,$col)")
                     return true
                 }
                 if (name == previous) break
@@ -365,7 +399,7 @@ class CocoonRescanService : AccessibilityService() {
             }
             dpad(GLOBAL_ACTION_DPAD_DOWN)
             repeat(col + 1) { dpad(GLOBAL_ACTION_DPAD_LEFT) }
-            val next = readFocusedName() ?: return false
+            val next = readFocusedName() ?: throw FlowFailure("could not read a tile")
             if (next == rowStart) return false
             rowStart = next
         }
@@ -373,7 +407,7 @@ class CocoonRescanService : AccessibilityService() {
     }
 
     /** Moves focus to the first tile of the first row; returns its name. */
-    private suspend fun goTopLeft(): String? {
+    internal suspend fun goTopLeft(): String? {
         repeat(MAX_ROWS) { dpad(GLOBAL_ACTION_DPAD_UP) }
         var previous: String? = null
         repeat(MAX_COLS / LEFT_BATCH + 1) {
@@ -385,17 +419,25 @@ class CocoonRescanService : AccessibilityService() {
         return previous
     }
 
-    private suspend fun dpad(action: Int) {
+    internal suspend fun dpad(action: Int) {
         performGlobalAction(action)
         delay(DPAD_DELAY_MS)
     }
 
     /** Opens the focused tile's context menu, reads its title, closes it again. */
-    private suspend fun readFocusedName(): String? {
+    internal suspend fun readFocusedName(): String? {
         val root = openContextMenu() ?: run { Log.w(TAG, "context menu did not open"); return null }
+        val title = contextMenuTitle(root)
+        if (title == null) Log.w(TAG, "context menu has no title")
+        closeContextMenu()
+        return title
+    }
+
+    /** Name of the tile whose context menu is open in [root] (the text left of the menu entries). */
+    internal fun contextMenuTitle(root: AccessibilityNodeInfo): String? {
         val edit = findText(root, MENU_MARKER) ?: return null
         val menuLeft = Rect().also { edit.getBoundsInScreen(it) }.left
-        val title = findNode(root) { node ->
+        return findNode(root) { node ->
             val text = node.text?.toString()
             if (text.isNullOrBlank() || text in MENU_ENTRIES || node.className?.toString() != "android.widget.TextView") {
                 false
@@ -404,21 +446,25 @@ class CocoonRescanService : AccessibilityService() {
                 b.right <= menuLeft
             }
         }?.text?.toString()
-        if (title == null) Log.w(TAG, "context menu has no title")
-        closeContextMenu()
-        return title
     }
 
-    private suspend fun openContextMenu(): AccessibilityNodeInfo? {
+    internal suspend fun openContextMenu(): AccessibilityNodeInfo? {
         val root = mainAppWindow()?.root ?: return null
         findText(root, MENU_MARKER)?.let { return root }
-        val menuButton = findNode(root) { it.contentDescription?.toString() == "Y" }?.let(::clickableAncestor)
+        val y = findNode(root) { it.contentDescription?.toString() == "Y" }
             ?: run { Log.w(TAG, "home menu button (Y) not found"); return null }
-        menuButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val button = clickableAncestor(y)
+        if (button != null) {
+            button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } else {
+            // In Cocoon's image-tile grid the Y hint has no clickable parent: touch it.
+            val b = Rect().also { y.getBoundsInScreen(it) }
+            tap(b.exactCenterX(), b.exactCenterY())
+        }
         return waitFor(UI_TIMEOUT_MS) { r -> if (findText(r, MENU_MARKER) != null) r else null }
     }
 
-    private suspend fun closeContextMenu() {
+    internal suspend fun closeContextMenu() {
         val window = mainAppWindow() ?: return
         val root = window.root ?: return
         val windowBounds = Rect().also { window.getBoundsInScreen(it) }
@@ -434,7 +480,7 @@ class CocoonRescanService : AccessibilityService() {
     // ── Accessibility helpers ───────────────────────────────────────────
 
     /** Topmost application window of each display. */
-    private fun topAppWindows(): List<AccessibilityWindowInfo> {
+    internal fun topAppWindows(): List<AccessibilityWindowInfo> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return listOfNotNull(windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION })
         }
@@ -444,24 +490,24 @@ class CocoonRescanService : AccessibilityService() {
         }
     }
 
-    private fun cocoonWindows(): List<AccessibilityWindowInfo> =
+    internal fun cocoonWindows(): List<AccessibilityWindowInfo> =
         topAppWindows().filter { it.root?.packageName?.toString() == CocoonAutoImport.COCOON_PACKAGE }
 
     /** A non-Cocoon app (an emulator, …) in front on any display, or null. */
-    private fun busyApp(): String? = topAppWindows()
+    internal fun busyApp(): String? = topAppWindows()
         .mapNotNull { it.root?.packageName?.toString() }
-        .firstOrNull { it != CocoonAutoImport.COCOON_PACKAGE }
+        .firstOrNull { it != CocoonAutoImport.COCOON_PACKAGE && it != allowedForeignPackage }
 
     /** Topmost application window on the display the flow currently works on. */
-    private fun mainAppWindow(): AccessibilityWindowInfo? {
+    internal fun mainAppWindow(): AccessibilityWindowInfo? {
         val top = topAppWindows()
         return top.firstOrNull { it.displayIdCompat() == activeDisplay } ?: top.firstOrNull()
     }
 
-    private fun AccessibilityWindowInfo.displayIdCompat(): Int =
+    internal fun AccessibilityWindowInfo.displayIdCompat(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) displayId else Display.DEFAULT_DISPLAY
 
-    private suspend fun clickText(text: String) {
+    internal suspend fun clickText(text: String) {
         val node = waitFor(UI_TIMEOUT_MS) { findText(it, text) } ?: throw FlowFailure("'$text' not found")
         val target = clickableAncestor(node) ?: throw FlowFailure("'$text' is not clickable")
         if (!target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) throw FlowFailure("click on '$text' failed")
@@ -473,7 +519,7 @@ class CocoonRescanService : AccessibilityService() {
      * match on another display moves the flow there (Settings and its dialogs can
      * open on either screen).
      */
-    private suspend fun <T : Any> waitFor(timeoutMs: Long, probe: (AccessibilityNodeInfo) -> T?): T? {
+    internal suspend fun <T : Any> waitFor(timeoutMs: Long, probe: (AccessibilityNodeInfo) -> T?): T? {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (true) {
             val active = mainAppWindow()
@@ -491,9 +537,10 @@ class CocoonRescanService : AccessibilityService() {
         }
     }
 
-    private suspend fun tap(x: Float, y: Float): Boolean = suspendCancellableCoroutine { cont ->
+    /** Touch at ([x], [y]) on the active display; a [durationMs] of ~1 s is a long press. */
+    internal suspend fun tap(x: Float, y: Float, durationMs: Long = TAP_MS): Boolean = suspendCancellableCoroutine { cont ->
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, TAP_MS))
+            .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, durationMs))
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setDisplayId(activeDisplay) }
             .build()
         val accepted = dispatchGesture(
@@ -508,7 +555,7 @@ class CocoonRescanService : AccessibilityService() {
     }
 
     /** Content-change events keep the node cache fresh; only needed while the flow runs. */
-    private fun setContentEvents(enabled: Boolean) {
+    internal fun setContentEvents(enabled: Boolean) {
         val info = serviceInfo ?: return
         val base = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
         info.eventTypes = if (enabled) base or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED else base
@@ -521,21 +568,21 @@ class CocoonRescanService : AccessibilityService() {
         private const val KEY_ROW = "settings_pod_row"
         private const val KEY_COL = "settings_pod_col"
 
-        private const val COCOON_HOME_TITLE = "Cocoon"
+        internal const val COCOON_HOME_TITLE = "Cocoon"
         private const val SETTINGS_TITLE = "Settings"
         private const val SETTINGS_POD = "Settings"
         /** Present in every tile context menu (games and pods show "Launch", platform folders "Open"). */
-        private const val MENU_MARKER = "Edit"
-        private val MENU_ENTRIES = setOf("Launch", "Open", "Edit", "Hide", "Unhide", "Favorite", "Unfavorite", "Remove")
+        internal const val MENU_MARKER = "Edit"
+        internal val MENU_ENTRIES = setOf("Launch", "Open", "Edit", "Hide", "Unhide", "Favorite", "Unfavorite", "Remove")
 
         private const val MAX_ROWS = 6
         private const val MAX_COLS = 40
         private const val LEFT_BATCH = 8
         private const val DPAD_DELAY_MS = 300L
-        private const val STEP_DELAY_MS = 300L
-        private const val POLL_MS = 100L
+        internal const val POLL_MS = 100L
+        internal const val STEP_DELAY_MS = 300L
         private const val TAP_MS = 60L
-        private const val UI_TIMEOUT_MS = 4_000L
+        internal const val UI_TIMEOUT_MS = 4_000L
         private const val TILE_LAUNCH_WAIT_MS = 1_500L
         private const val FOREGROUND_SETTLE_MS = 2_000L
         private const val SCAN_TIMEOUT_MS = 5 * 60_000L
@@ -548,10 +595,10 @@ class CocoonRescanService : AccessibilityService() {
         private fun findSettingsTile(root: AccessibilityNodeInfo): AccessibilityNodeInfo? =
             findNode(root) { it.isClickable && it.contentDescription?.toString() == SETTINGS_POD }
 
-        private fun findText(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? =
+        internal fun findText(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? =
             findNode(root) { it.text?.toString() == text }
 
-        private fun findNode(root: AccessibilityNodeInfo, match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        internal fun findNode(root: AccessibilityNodeInfo, match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
             if (match(root)) return root
             for (i in 0 until root.childCount) {
                 val child = root.getChild(i) ?: continue
@@ -560,7 +607,7 @@ class CocoonRescanService : AccessibilityService() {
             return null
         }
 
-        private fun clickableAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        internal fun clickableAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
             var current: AccessibilityNodeInfo? = node
             while (current != null && !current.isClickable) current = current.parent
             return current

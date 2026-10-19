@@ -40,4 +40,22 @@ object DesktopPairing {
         DesktopConfig.savePairing(url, name, device.token, device.deviceId)
         return device
     }
+
+    /**
+     * Re-sends the device capabilities (remote install/uninstall, collection sync) for
+     * the stored pairing, so a device paired by an older build gains the new ones.
+     */
+    suspend fun advertiseCapabilities() {
+        val config = DesktopConfig
+        val client = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+        DevicePairing(client).advertiseCapabilities(
+            baseUrl = config.pairedBaseUrl,
+            device = PairedDevice(config.pairedToken, config.pairedDeviceId, null),
+            platform = PLATFORM,
+            clientVersion = DesktopConfig.appVersion,
+        )
+    }
 }

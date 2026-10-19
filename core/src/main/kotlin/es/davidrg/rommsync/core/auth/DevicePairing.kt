@@ -117,8 +117,11 @@ class DevicePairing(private val client: OkHttpClient) {
     }
 
     /**
-     * `PUT /api/devices/{id}` with `remote_install=true`, `sync_mode=api` and the
-     * device metadata. Without the capability RomM refuses install requests.
+     * `PUT /api/devices/{id}` with [CAPABILITIES] (`remote_install`,
+     * `remote_uninstall`, `collection_sync`), `sync_mode=api` and the device
+     * metadata. Without the capabilities RomM refuses install/uninstall requests
+     * and collection subscriptions. Idempotent: already-paired clients call it on
+     * start so devices paired by an older build gain new capabilities.
      */
     suspend fun advertiseCapabilities(
         baseUrl: String,
@@ -130,7 +133,7 @@ class DevicePairing(private val client: OkHttpClient) {
         service(baseUrl, authed).updateDevice(
             device.deviceId,
             DeviceCapabilitiesUpdate(
-                capabilities = mapOf(CAPABILITY_REMOTE_INSTALL to true),
+                capabilities = CAPABILITIES,
                 syncMode = "api",
                 hostname = localHostname(),
                 platform = platform,
@@ -156,6 +159,13 @@ class DevicePairing(private val client: OkHttpClient) {
     companion object {
         const val CLIENT = "romm-sync"
         const val CAPABILITY_REMOTE_INSTALL = "remote_install"
+        const val CAPABILITY_REMOTE_UNINSTALL = "remote_uninstall"
+        const val CAPABILITY_COLLECTION_SYNC = "collection_sync"
+        val CAPABILITIES: Map<String, Boolean> = mapOf(
+            CAPABILITY_REMOTE_INSTALL to true,
+            CAPABILITY_REMOTE_UNINSTALL to true,
+            CAPABILITY_COLLECTION_SYNC to true,
+        )
         private const val MAX_WAIT_SECONDS = 60L
 
         /** Scope names from RomM `handler/auth/constants.py`. */

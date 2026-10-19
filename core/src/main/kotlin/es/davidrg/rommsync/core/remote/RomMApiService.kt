@@ -16,6 +16,7 @@ import es.davidrg.rommsync.core.remote.dto.DeviceCapabilitiesUpdate
 import es.davidrg.rommsync.core.remote.dto.DeviceDto
 import es.davidrg.rommsync.core.remote.dto.InstallReportRequest
 import es.davidrg.rommsync.core.remote.dto.InstallRequestDto
+import es.davidrg.rommsync.core.remote.dto.DeviceCollectionDto
 import es.davidrg.rommsync.core.remote.dto.RomDetailDto
 import es.davidrg.rommsync.core.remote.dto.ServerAssetDto
 import okhttp3.MultipartBody
@@ -178,13 +179,19 @@ interface RomMApiService {
         @Path("deviceId") deviceId: String,
     ): List<InstallRequestDto>
 
-    /** PUT /api/devices/{device_id}/installs/{request_id} — report done/already_installed/failed. */
+    /** PUT /api/devices/{device_id}/installs/{request_id} — report done/already_installed/not_installed/failed. */
     @PUT("api/devices/{deviceId}/installs/{requestId}")
     suspend fun reportInstall(
         @Path("deviceId") deviceId: String,
         @Path("requestId") requestId: String,
         @Body report: InstallReportRequest,
     ): Unit
+
+    /** GET /api/devices/{device_id}/collections — collections this device is subscribed to (sync to device). */
+    @GET("api/devices/{deviceId}/collections")
+    suspend fun getDeviceCollections(
+        @Path("deviceId") deviceId: String,
+    ): List<DeviceCollectionDto>
 
     /** GET /api/roms/{id} — detailed rom with its files (ids, names, paths, sizes, hashes). */
     @GET("api/roms/{romId}")

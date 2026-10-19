@@ -1,10 +1,13 @@
 package es.davidrg.rommsync.data.repository
 
 import es.davidrg.rommsync.BuildConfig
+import es.davidrg.rommsync.core.collections.Provenance
+import es.davidrg.rommsync.data.local.dao.CollectionSyncDao
 import es.davidrg.rommsync.data.local.dao.PlatformDao
 import es.davidrg.rommsync.data.local.dao.RomDao
 import es.davidrg.rommsync.data.local.entity.DownloadedRomEntity
 import es.davidrg.rommsync.data.local.entity.PlatformEntity
+import es.davidrg.rommsync.data.local.entity.RomProvenanceEntity
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.RomDto
@@ -31,6 +34,7 @@ import retrofit2.HttpException
 class RomRepository(
     private val platformDao: PlatformDao,
     private val romDao: RomDao,
+    private val collectionSyncDao: CollectionSyncDao,
 ) {
 
     private var apiService: RomMApiService? = null
@@ -208,10 +212,17 @@ class RomRepository(
                 fileSizeBytes = fileSizeBytes,
             )
         )
+        markManual(romId)
+    }
+
+    /** Downloaded by hand or found on disk: collection sync must never remove it. */
+    private suspend fun markManual(romId: Int) {
+        collectionSyncDao.addMarker(RomProvenanceEntity(romId, Provenance.MANUAL))
     }
 
     suspend fun removeDownloadedRom(romId: Int) {
         romDao.deleteDownloadedRom(romId)
+        collectionSyncDao.deleteMarkers(romId)
     }
 
     /**
@@ -231,6 +242,7 @@ class RomRepository(
             }
         }
         romDao.deleteDownloadedRom(romId)
+        collectionSyncDao.deleteMarkers(romId)
         fileDeleted
     }
 
@@ -424,6 +436,7 @@ class RomRepository(
                                 fileSizeBytes = if (localFile.isFile) localFile.length() else 0L,
                             )
                         )
+                        markManual(rom.id)
                         alreadyDownloaded.add(rom.id)
                         detected++
                     }

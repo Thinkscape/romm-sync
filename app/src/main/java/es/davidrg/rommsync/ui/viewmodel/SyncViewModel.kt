@@ -53,7 +53,8 @@ data class SaveAccessItem(
     val usable: Boolean,
     /**
      * Unreadable and under `Android/data` on Android 13+, where the system
-     * folder picker refuses that tree: a grant cannot help, only root.
+     * folder picker refuses that tree: a grant cannot help, only root. False for
+     * emulators whose own DocumentsProvider root can be granted (Dolphin, Eden).
      */
     val blockedBySystem: Boolean = false,
 )
@@ -266,7 +267,7 @@ class SyncViewModel(
                     path = path,
                     usable = SavePathAccess.isUsable(path, appContext),
                 ).let { item ->
-                    item.copy(blockedBySystem = !item.usable && SavePathAccess.isSystemBlocked(path))
+                    item.copy(blockedBySystem = !item.usable && SavePathAccess.isSystemBlocked(path, appContext))
                 }
             }
             .sortedWith(compareBy<SaveAccessItem>({ it.usable }, { it.emulatorName }))

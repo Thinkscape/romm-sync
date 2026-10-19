@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 
 /*
@@ -115,22 +116,40 @@ class LauncherRefresher(
     private val steamGameEndTimeoutMs: Long = 60_000,
     private val pollMs: Long = 250,
 ) {
-    /** Restarts an idle ES-DE that was running before [lastInstallAtMs]. */
-    fun refresh(lastInstallAtMs: Long): RefreshOutcome {
+    /**
+     * Restarts an idle ES-DE that was running before [lastInstallAtMs].
+     *
+     * With [edit] (changes to ES-DE's own files: gamelists, collections,
+     * `es_settings.xml`), the edit runs only while ES-DE is not running: at once
+     * when ES-DE is not running, else between stopping an idle ES-DE and
+     * relaunching it (regardless of [lastInstallAtMs]). Whenever the edit could
+     * not run yet the outcome is [RefreshOutcome.Deferred], so the caller keeps it
+     * and retries; [mayRestart] = false never stops ES-DE and waits for it to exit.
+     */
+    fun refresh(lastInstallAtMs: Long, edit: (() -> Unit)? = null, mayRestart: Boolean = true): RefreshOutcome {
         val idle = when (val state = EsdeProcessPolicy.inspect(system.list())) {
-            EsdeState.NotRunning -> return RefreshOutcome.Skipped("es-de not running")
+            EsdeState.NotRunning -> {
+                if (edit == null) return RefreshOutcome.Skipped("es-de not running")
+                edit()
+                return RefreshOutcome.Refreshed("edited while es-de not running")
+            }
             is EsdeState.Busy -> return RefreshOutcome.Deferred(state.reason)
             is EsdeState.Idle -> state
         }
+        // Without an edit a refusal is final; with one ES-DE must be closed first, so wait.
+        fun refuse(reason: String): RefreshOutcome =
+            if (edit == null) RefreshOutcome.Skipped(reason) else RefreshOutcome.Deferred("$reason; es-de files edited once it exits")
+
+        if (!mayRestart) return refuse("es-de running, refresh disabled")
         val esde = idle.esde
-        if (esde.startedAtMs >= lastInstallAtMs) return RefreshOutcome.Skipped("es-de started after the install")
+        if (edit == null && esde.startedAtMs >= lastInstallAtMs) return RefreshOutcome.Skipped("es-de started after the install")
 
         val env = system.environ(esde.pid)
         val steamGameId = env["SteamGameId"]?.takeIf { it.isNotBlank() && it != "0" }
         val relaunch: () -> Boolean
         val method: String
         if (steamGameId != null) {
-            if (system.list().none { it.comm == "steam" }) return RefreshOutcome.Skipped("steam not running")
+            if (system.list().none { it.comm == "steam" }) return refuse("steam not running")
             method = "restart via steam://rungameid/$steamGameId"
             relaunch = {
                 // Steam ignores a launch while the previous run of the shortcut is alive;
@@ -139,16 +158,19 @@ class LauncherRefresher(
                 system.spawnDetached(listOf("steam", "steam://rungameid/$steamGameId"), emptyMap())
             }
         } else {
-            val command = relaunchCommand(esde, env) ?: return RefreshOutcome.Skipped("unknown es-de command line")
+            val command = relaunchCommand(esde, env) ?: return refuse("unknown es-de command line")
             method = "restart"
             relaunch = { system.spawnDetached(command, env.filterKeys { it in DISPLAY_ENV }) }
         }
 
-        if (!system.terminate(esde.pid)) return RefreshOutcome.Skipped("cannot signal es-de (pid ${esde.pid})")
+        if (!system.terminate(esde.pid)) return refuse("cannot signal es-de (pid ${esde.pid})")
         if (!waitGone(esde.pid, exitTimeoutMs)) {
-            return RefreshOutcome.Skipped("es-de did not exit within ${exitTimeoutMs / 1000} s of SIGTERM")
+            return refuse("es-de did not exit within ${exitTimeoutMs / 1000} s of SIGTERM")
         }
-        return if (relaunch()) RefreshOutcome.Refreshed(method) else RefreshOutcome.Skipped("relaunch failed ($method)")
+        // ES-DE is gone: edit its files before it reads them again; a failing edit must not keep it closed.
+        val editError = edit?.let { runCatching(it).exceptionOrNull() }
+        val suffix = editError?.let { "; edit failed: ${it.javaClass.simpleName}: ${it.message}" }.orEmpty()
+        return if (relaunch()) RefreshOutcome.Refreshed(method + suffix) else RefreshOutcome.Skipped("relaunch failed ($method)$suffix")
     }
 
     private fun waitGone(pid: Long, timeoutMs: Long): Boolean {
@@ -178,9 +200,20 @@ class LauncherRefresher(
     }
 }
 
+/** Queues a change to ES-DE's own files; it runs only while ES-DE is not running. */
+fun interface EsdeEditor {
+    fun submit(description: String, edit: () -> Unit)
+}
+
 /**
  * Debounces install notifications into one refresh per batch and retries while a game
  * runs. Logs `launcher: es-de refreshed (<method>)` or `launcher: skipped (<reason>)`.
+ *
+ * Also the [EsdeEditor] of the daemon: [submit]ted edits of ES-DE's files
+ * (collections, gamelists, settings) run in order with the next refresh, i.e.
+ * immediately while ES-DE is closed, else between stopping an idle ES-DE and
+ * relaunching it. Pending edits are never dropped: while a game runs, or while
+ * ES-DE is open and refreshing is disabled, they wait until they can run.
  */
 class LauncherRefreshScheduler(
     private val refresher: LauncherRefresher,
@@ -190,34 +223,64 @@ class LauncherRefreshScheduler(
     private val debounceMs: Long = 5_000,
     private val retryMs: Long = 15_000,
     private val maxWaitMs: Long = 6 * 60 * 60_000L,
-) {
+) : EsdeEditor {
     private val installs = Channel<Long>(Channel.UNLIMITED)
+    private val edits = ConcurrentLinkedQueue<Pair<String, () -> Unit>>()
 
-    /** Call after an install that added files under the ROM root. */
+    /** Call after an install (or uninstall) that changed files under the ROM root. */
     fun installFinished() {
         installs.trySend(nowMs())
     }
 
+    override fun submit(description: String, edit: () -> Unit) {
+        edits.add(description to edit)
+        installs.trySend(nowMs())
+    }
+
     fun start(scope: CoroutineScope): Job = scope.launch {
+        // Edits taken from the queue but not yet applied (ES-DE busy); kept across batches.
+        val pending = mutableListOf<Pair<String, () -> Unit>>()
         for (first in installs) {
             var lastInstall = first
             while (true) {
                 lastInstall = withTimeoutOrNull(debounceMs) { installs.receive() } ?: break
             }
-            if (!enabled()) {
-                log("launcher: skipped (disabled: launcher.refresh_on_install=false)")
-                continue
-            }
             val deadline = nowMs() + maxWaitMs
             var waitingFor: String? = null
             while (true) {
-                val outcome = runCatching { refresher.refresh(lastInstall) }
+                while (true) {
+                    val next = edits.poll() ?: break
+                    pending += next
+                }
+                val restart = enabled()
+                if (!restart && pending.isEmpty()) {
+                    log("launcher: skipped (disabled: launcher.refresh_on_install=false)")
+                    break
+                }
+                val batch = pending.toList()
+                var applied = false
+                val edit: (() -> Unit)? = if (batch.isEmpty()) null else {
+                    {
+                        applied = true
+                        for ((description, block) in batch) {
+                            runCatching(block).onFailure {
+                                log("launcher: es-de edit failed ($description): ${it.javaClass.simpleName}: ${it.message}")
+                            }
+                        }
+                    }
+                }
+                val outcome = runCatching { refresher.refresh(lastInstall, edit, restart) }
                     .getOrElse { RefreshOutcome.Skipped("${it.javaClass.simpleName}: ${it.message}") }
+                if (applied) {
+                    pending.removeAll(batch.toSet())
+                    log("launcher: es-de files updated (${batch.joinToString(", ") { it.first }})")
+                }
                 when (outcome) {
                     is RefreshOutcome.Refreshed -> log("launcher: es-de refreshed (${outcome.method})")
                     is RefreshOutcome.Skipped -> log("launcher: skipped (${outcome.reason})")
                     is RefreshOutcome.Deferred -> {
-                        if (nowMs() >= deadline) {
+                        // Pending edits wait as long as it takes; a plain refresh gives up after maxWaitMs.
+                        if (pending.isEmpty() && nowMs() >= deadline) {
                             log("launcher: skipped (${outcome.reason} for ${maxWaitMs / 60_000} min)")
                         } else {
                             if (waitingFor != outcome.reason) log("launcher: waiting (${outcome.reason})")

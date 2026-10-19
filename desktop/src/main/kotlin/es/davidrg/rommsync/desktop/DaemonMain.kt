@@ -1,5 +1,6 @@
 package es.davidrg.rommsync.desktop
 
+import es.davidrg.rommsync.core.collections.CollectionReconciler
 import es.davidrg.rommsync.core.auth.PairingDeniedException
 import es.davidrg.rommsync.core.auth.PairingExpiredException
 import es.davidrg.rommsync.core.install.InstallClient
@@ -25,6 +26,8 @@ import java.io.File
  *
  * Only the daemon runs an [InstallClient]: the GUI never claims installs, so a
  * GUI open next to the daemon cannot double-claim the same device's requests.
+ * The daemon also runs collection sync ([CollectionReconciler]): RomM collections
+ * marked "Sync to device" are installed and mirrored as ES-DE custom collections.
  */
 object DaemonMain {
 
@@ -59,13 +62,42 @@ object DaemonMain {
             },
             log = ::log,
         )
+        val romStore = DesktopInstalledRomStore(library)
+        val home = System.getProperty("user.home", ".")
+        val esdePaths = EsdeRomPaths {
+            config.esdeRomDirectory(EsdeSettings.file(File(config.esdeDataDir)), home)
+        }
+        val esdeLedger = EsdeCollectionLedger(File(config.configDir, "esde-collections.properties"))
+        // ES-DE files are edited only while ES-DE is closed: the scheduler stops an idle ES-DE around the edit.
+        val collectionWriter = EsdeCollectionWriter(
+            esdeDir = {
+                config.sync()
+                File(config.esdeDataDir).takeIf { it.isDirectory }
+            },
+            romsRoot = { config.romsRoot },
+            paths = esdePaths,
+            ledger = esdeLedger,
+            editor = launcherRefresh,
+            log = ::log,
+        )
+        val gameRemover = EsdeGameRemover(
+            target = {
+                config.sync()
+                config.esdeTarget()
+            },
+            paths = esdePaths,
+            ledger = esdeLedger,
+            editor = launcherRefresh,
+            log = ::log,
+        )
+        lateinit var reconciler: CollectionReconciler
         val installClient = InstallClient(
             baseUrl = config.pairedBaseUrl,
             token = config.pairedToken,
             deviceId = config.pairedDeviceId,
             romsRoot = { config.romsRoot },
             downloadsAllowed = { true },
-            store = DesktopInstalledRomStore(library),
+            store = romStore,
             listener = object : InstallListener {
                 // Fresh installs whose ES-DE gamelist/media export is still queued: ES-DE is
                 // refreshed once the entry is written, so the restart shows title and media.
@@ -83,6 +115,16 @@ object DaemonMain {
                 override fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {
                     if (awaitingExport.remove(requestId)) launcherRefresh.installFinished()
                 }
+
+                override fun onUninstallFinished(requestId: String?, romId: Int, status: String, reason: String?, files: List<File>) {
+                    log("uninstall ${requestId ?: "(collection sync)"} rom $romId -> $status${reason?.let { " ($it)" } ?: ""}")
+                    // The ES-DE cleanup queued by the remover restarts ES-DE; without an ES-DE folder refresh here.
+                    if (status == InstallClient.STATUS_DONE && config.esdeTarget() == null) launcherRefresh.installFinished()
+                }
+
+                override fun onCollectionsChanged(reason: String) {
+                    reconciler.request(reason)
+                }
             },
             logger = ::log,
             // Re-read per install: the GUI may have changed the ES-DE folder or the toggle.
@@ -90,6 +132,17 @@ object DaemonMain {
                 config.sync()
                 config.esdeInstallTarget()
             },
+            provenance = romStore,
+            gameRemover = gameRemover,
+        )
+        reconciler = CollectionReconciler(
+            backend = installClient,
+            installed = romStore,
+            provenance = romStore,
+            state = DesktopCollectionState(File(config.configDir, "collections.properties")),
+            writer = collectionWriter,
+            coverDir = File(config.cacheDir, "collection-covers"),
+            logger = ::log,
         )
 
         log("romm-sync ${DesktopConfig.appVersion} daemon: device ${config.pairedDeviceName} (${config.pairedDeviceId}) at ${config.pairedBaseUrl}, roms ${config.romsRoot}")
@@ -117,11 +170,25 @@ object DaemonMain {
             sun.misc.Signal.handle(sun.misc.Signal("USR1")) { syncTriggers.trySend("SIGUSR1") }
         }.onFailure { log("SIGUSR1 trigger unavailable: ${it.message}") }
 
+        // Devices paired by an older build lack remote_uninstall/collection_sync.
+        scope.launch {
+            try {
+                DesktopPairing.advertiseCapabilities()
+                log("capabilities advertised (remote install/uninstall, collection sync)")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("capabilities: update failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
         installClient.start()
         launcherRefresh.start(scope)
+        reconciler.start(scope)
         scope.launch {
             while (isActive) {
                 syncTriggers.trySend("timer")
+                // Smart collections change on scans without an event: re-check every cycle.
+                reconciler.request("periodic")
                 delay(SYNC_INTERVAL_MS)
             }
         }

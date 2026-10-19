@@ -32,6 +32,12 @@ class SaveSyncWorker(
         val dataStore = SettingsDataStore(applicationContext)
         val database = RomSyncDatabase.getDatabase(applicationContext)
 
+        // Every sync cycle (periodic or triggered) also re-checks the RomM collections
+        // synced to this device: smart collections change on scans without an event.
+        if (inputData.getInt(KEY_CONFLICT_ROM_ID, -1) < 0) {
+            es.davidrg.rommsync.install.InstallListenerService.requestReconcile(applicationContext, "sync cycle")
+        }
+
         // Guard de seguridad: si el usuario desactivó el sync de saves, el
         // worker termina inmediatamente sin tocar servidor ni disco. Cubre
         // trabajos periódicos ya encolados antes del cambio de ajuste.

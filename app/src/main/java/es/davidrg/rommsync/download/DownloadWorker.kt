@@ -376,6 +376,13 @@ class DownloadWorker(
                     excludedFromSync = existing?.excludedFromSync ?: false,
                 ),
             )
+            // Downloaded by hand: collection sync never removes it.
+            db.collectionSyncDao().addMarker(
+                es.davidrg.rommsync.data.local.entity.RomProvenanceEntity(
+                    romId,
+                    es.davidrg.rommsync.core.collections.Provenance.MANUAL,
+                ),
+            )
 
             Result.success(workDataOf(
                 KEY_ROM_ID to romId, KEY_ROM_NAME to romName,

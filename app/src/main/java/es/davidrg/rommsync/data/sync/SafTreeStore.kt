@@ -14,6 +14,10 @@ import android.provider.DocumentsContract
  * Android 13 y en parches de seguridad ≥ mar-2024). Este store alimenta al
  * staging ([SafStaging]), que copia el contenido vía ContentResolver para
  * que los handlers trabajen con la API File tal cual.
+ *
+ * On Android 13+ the trees of emulators that ship their own DocumentsProvider
+ * (Dolphin, Eden: [EmulatorDocumentProviders]) are granted on that provider's
+ * root instead; they are stored under the emulator's real user-dir path too.
  */
 class SafTreeStore(context: Context) {
 
@@ -59,11 +63,21 @@ class SafTreeStore(context: Context) {
         private const val EXTERNAL_AUTHORITY = "com.android.externalstorage.documents"
 
         /**
-         * URI de árbol para lanzar el selector directamente en [path] (solo
-         * volumen primario). Null si la ruta no está en él → el selector abre
-         * en su ubicación por defecto.
+         * URI de árbol para lanzar el selector directamente en [path]: la raíz
+         * del DocumentsProvider del emulador cuando la ruta está en su carpeta de
+         * usuario ([EmulatorDocumentProviders]; hoy el selector la ignora, ver
+         * allí), si no la ruta en el volumen primario. Null si no aplica → el
+         * selector abre en su ubicación por defecto.
          */
         fun initialTreeUri(path: String): Uri? {
+            EmulatorDocumentProviders.forPath(path)?.let { provider ->
+                return runCatching {
+                    DocumentsContract.buildTreeDocumentUri(
+                        provider.authority,
+                        EmulatorDocumentProvider.ROOT_DOCUMENT_ID,
+                    )
+                }.getOrNull()
+            }
             val base = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
             val p = path.trimEnd('/')
             if (p != base && !p.startsWith("$base/")) return null
@@ -76,10 +90,18 @@ class SafTreeStore(context: Context) {
             }.getOrNull()
         }
 
-        /** "primary:Android/data/x" → "/storage/emulated/0/Android/data/x". */
+        /**
+         * Real path of a granted tree: "primary:Android/data/x" →
+         * "/storage/emulated/0/Android/data/x"; an emulator provider tree
+         * ("root/GC" on `org.dolphinemu.dolphinemu.user`) → its user dir + "/GC".
+         */
         fun pathFromTreeUri(uri: Uri): String? = runCatching {
             val docId = DocumentsContract.getTreeDocumentId(uri)
-            if (!docId.startsWith("primary:")) return@runCatching null
+            EmulatorDocumentProviders.forAuthority(uri.authority)?.let { provider ->
+                val rel = provider.relativePathOf(docId) ?: return@runCatching null
+                return@runCatching if (rel.isEmpty()) provider.userDir else "${provider.userDir}/$rel"
+            }
+            if (uri.authority != EXTERNAL_AUTHORITY || !docId.startsWith("primary:")) return@runCatching null
             val rel = docId.removePrefix("primary:").trim('/')
             val base = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
             if (rel.isEmpty()) base else "$base/$rel"

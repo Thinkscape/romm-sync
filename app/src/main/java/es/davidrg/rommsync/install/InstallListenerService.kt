@@ -20,9 +20,12 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import es.davidrg.rommsync.BuildConfig
 import es.davidrg.rommsync.MainActivity
 import es.davidrg.rommsync.R
 import es.davidrg.rommsync.RomMSyncApplication
+import es.davidrg.rommsync.core.auth.PairedDevice
+import es.davidrg.rommsync.core.collections.CollectionReconciler
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.install.InstallClient
 import es.davidrg.rommsync.core.install.InstallListener
@@ -41,11 +44,12 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Foreground service (type `dataSync`) that keeps this device online in RomM
- * and executes push-install requests through one [InstallClient].
+ * and executes push-install and uninstall requests through one [InstallClient].
  *
- * Runs only while a paired device exists. Also schedules a save sync two
- * minutes after the screen turns on while charging or on Wi-Fi (cancelled if
- * the screen goes off again first).
+ * Also owns the [CollectionReconciler] for RomM collections synced to this
+ * device (runs on socket connect, `collections:changed` and every periodic save
+ * sync), and schedules a save sync two minutes after the screen turns on while
+ * charging or on Wi-Fi (cancelled if the screen goes off again first).
  */
 class InstallListenerService : Service() {
 
@@ -55,6 +59,8 @@ class InstallListenerService : Service() {
 
     private var client: InstallClient? = null
     private var clientDevice: PairedDeviceSettings? = null
+    private var reconciler: CollectionReconciler? = null
+    private var reconcilerJob: Job? = null
     private var screenOnSyncJob: Job? = null
     private var postInstallSyncJob: Job? = null
     private var screenReceiverRegistered = false
@@ -75,6 +81,7 @@ class InstallListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createChannels()
         // startForeground must happen promptly after startForegroundService().
         ServiceCompat.startForeground(
@@ -105,6 +112,7 @@ class InstallListenerService : Service() {
                 runCatching { running.drainNow() }
                     .onFailure { Log.w(TAG, "drain failed: ${it.message}") }
             }
+            if (intent?.action == ACTION_RECONCILE) requestReconcile("periodic")
         }
         return START_STICKY
     }
@@ -116,6 +124,7 @@ class InstallListenerService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         if (screenReceiverRegistered) {
             unregisterReceiver(screenReceiver)
             screenReceiverRegistered = false
@@ -124,16 +133,26 @@ class InstallListenerService : Service() {
             client?.stop()
             client = null
             clientDevice = null
+            reconcilerJob?.cancel()
+            reconcilerJob = null
+            reconciler = null
         }
         scope.cancel()
         super.onDestroy()
+    }
+
+    /** Queues a collection reconcile (no-op until a paired client runs). */
+    fun requestReconcile(reason: String) {
+        reconciler?.request(reason)
     }
 
     @Synchronized
     private fun ensureClient(paired: PairedDeviceSettings): InstallClient {
         client?.let { if (clientDevice == paired) return it }
         client?.stop()
+        reconcilerJob?.cancel()
         val store = container.settingsDataStore
+        val collectionStore = container.collectionSyncStore
         val newClient = InstallClient(
             baseUrl = paired.baseUrl,
             token = paired.token,
@@ -152,9 +171,35 @@ class InstallListenerService : Service() {
                     null
                 }
             },
+            provenance = collectionStore,
+            gameRemover = CocoonGameRemover(applicationContext, store),
         )
+        val newReconciler = CollectionReconciler(
+            backend = newClient,
+            installed = container.installedRomStore,
+            provenance = collectionStore,
+            state = collectionStore,
+            writer = CocoonCollectionWriter(applicationContext),
+            coverDir = File(cacheDir, "collection-covers"),
+            logger = { Log.i(TAG, it) },
+        )
+        val job = SupervisorJob(scope.coroutineContext[Job])
+        newReconciler.start(CoroutineScope(scope.coroutineContext + job))
         client = newClient
         clientDevice = paired
+        reconciler = newReconciler
+        reconcilerJob = job
+        // Devices paired by an older build lack remote_uninstall/collection_sync; idempotent.
+        scope.launch {
+            runCatching {
+                container.devicePairing.advertiseCapabilities(
+                    paired.baseUrl,
+                    PairedDevice(paired.token, paired.deviceId, null),
+                    PAIRING_PLATFORM,
+                    BuildConfig.VERSION_NAME,
+                )
+            }.onFailure { Log.w(TAG, "cannot advertise capabilities: ${it.message}") }
+        }
         newClient.start()
         return newClient
     }
@@ -213,8 +258,34 @@ class InstallListenerService : Service() {
                     null,
                     null,
                 )
-                CocoonAutoImport.onGameInstalled(applicationContext)
+                CocoonAutoImport.onLibraryChanged(applicationContext)
             }
+        }
+
+        override fun onUninstallFinished(requestId: String?, romId: Int, status: String, reason: String?, files: List<File>) {
+            // Collection-driven removals (no request id) stay silent; RomM-requested ones notify like installs.
+            if (requestId == null) return
+            val name = files.firstOrNull()?.name ?: tr("android.install.rom_fallback", romId)
+            val (title, text) = when (status) {
+                InstallClient.STATUS_DONE -> tr("android.install.uninstall_done_title") to name
+                InstallClient.STATUS_NOT_INSTALLED -> tr("android.install.uninstall_none_title") to name
+                else -> tr("android.install.uninstall_failed_title") to (reason ?: name)
+            }
+            notify(
+                requestId,
+                NotificationCompat.Builder(this@InstallListenerService, CHANNEL_RESULTS)
+                    .setSmallIcon(R.drawable.ic_stat_sync)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setContentIntent(openAppIntent())
+                    .setAutoCancel(true)
+                    .build(),
+            )
+        }
+
+        override fun onCollectionsChanged(reason: String) {
+            requestReconcile(reason)
         }
 
         override fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {
@@ -331,7 +402,10 @@ class InstallListenerService : Service() {
 
     companion object {
         private const val TAG = "InstallListener"
+        /** Same platform string ConfigViewModel sends when pairing. */
+        private const val PAIRING_PLATFORM = "android"
         private const val ACTION_DRAIN = "es.davidrg.rommsync.install.DRAIN"
+        private const val ACTION_RECONCILE = "es.davidrg.rommsync.install.RECONCILE"
         private const val CHANNEL_SERVICE = "romm_device"
         internal const val CHANNEL_RESULTS = "romm_installs"
         private const val NOTIFICATION_ID_SERVICE = 4201
@@ -343,17 +417,34 @@ class InstallListenerService : Service() {
         private fun hostOf(baseUrl: String): String =
             runCatching { URI(baseUrl).host }.getOrNull() ?: baseUrl
 
+        @Volatile
+        private var instance: InstallListenerService? = null
+
+        /**
+         * Periodic collection reconcile (called from the save-sync cycle): queued
+         * on the running service, or delivered with a start intent otherwise.
+         */
+        fun requestReconcile(context: Context, reason: String) {
+            instance?.let {
+                it.requestReconcile(reason)
+                return
+            }
+            startWith(context, ACTION_RECONCILE)
+        }
+
         /**
          * Starts (or nudges) the service when a paired device exists. [drain]
          * also claims pending installs right away. Safe from any context: a
          * background-start refusal is logged, not thrown.
          */
-        fun start(context: Context, drain: Boolean = false) {
+        fun start(context: Context, drain: Boolean = false) = startWith(context, if (drain) ACTION_DRAIN else null)
+
+        private fun startWith(context: Context, action: String?) {
             val app = context.applicationContext
             val paired = (app as? RomMSyncApplication)?.container?.settingsDataStore?.getPairedDeviceBlocking()
             if (paired == null) return
             val intent = Intent(app, InstallListenerService::class.java)
-            if (drain) intent.action = ACTION_DRAIN
+            if (action != null) intent.action = action
             try {
                 ContextCompat.startForegroundService(app, intent)
             } catch (e: IllegalStateException) {

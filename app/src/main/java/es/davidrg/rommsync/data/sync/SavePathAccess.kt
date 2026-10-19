@@ -88,10 +88,14 @@ object SavePathAccess {
     /**
      * true when [path] lies in another app's `Android/data` (or `Android/obb`)
      * on Android 13+: the system folder picker no longer lets the user grant
-     * those trees, so without root they stay unreadable. Read-only check.
+     * those trees, so without root they stay unreadable. Exception: folders of
+     * an installed emulator that exposes its user dir through its own
+     * DocumentsProvider ([EmulatorDocumentProviders]) are grantable on that
+     * provider's root. Read-only check.
      */
-    fun isSystemBlocked(path: String): Boolean =
+    fun isSystemBlocked(path: String, context: Context): Boolean =
         android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
             (path.contains("/Android/data/") || path.contains("/Android/obb/")) &&
-            !RootShell.available
+            !RootShell.available &&
+            EmulatorDocumentProviders.forPath(path)?.isAvailable(context) != true
 }

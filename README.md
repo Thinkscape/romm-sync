@@ -18,6 +18,8 @@ Cross-platform client for RomM servers: browse your library, download ROMs strai
 > **Media on push.** After each pushed install (`done` or `already_installed`, reported first), the client writes RomM's scraped media and metadata in ES-DE's layout (`core/.../metadata/EsdeMediaExporter.kt`, shared with the manual "Export to ES-DE" actions): media to `<MediaDirectory>/<system>/{covers,screenshots,titlescreens,marquees,fanart,3dboxes,backcovers,physicalmedia,miximages,videos,manuals}/<rom stem>.<ext>`, and the game's entry (name, desc, rating, releasedate, developer, publisher, genre, players) upserted into `<ES-DE dir>/gamelists/<system>/gamelist.xml`, keeping other games and ES-DE's own fields. Linux daemon: ES-DE dir `~/ES-DE` (setting `esde_data_dir`), `MediaDirectory` from its `settings/es_settings.xml`, off with pref `esde.media_on_install=false`. Android: setting "ES-DE / Cocoon metadata folder" (default `<ROMs root parent>/ES-DE` on removable storage) with `downloaded_media/` inside; in Cocoon select it under Settings → Library & Data → ES-DE Integration and enable startup checks.
 >
 > **ES-DE refresh on push (Linux daemon).** ES-DE has no reload/IPC and only scans ROMs and gamelists at startup or on Utilities → Rescan ROM directory, so ~5 s after a batch of `done` installs (after their media export) the daemon restarts a running ES-DE that sits idle in its UI (`desktop/.../LauncherRefresh.kt`): never while ES-DE has a child process (a game) or another Steam game runs (it waits and retries), clean SIGTERM, then the same AppImage/arguments via `systemd-run --user` (Desktop Mode) or `steam steam://rungameid/<SteamGameId>` when Steam launched it (Game Mode). ES-DE returns to its start view, like a rescan. Logs `launcher: es-de refreshed (<method>)` / `launcher: skipped (<reason>)`; off with pref `launcher.refresh_on_install=false`.
+>
+> **Uninstall and collection sync.** The client advertises `remote_uninstall` and `collection_sync`. Install requests with `action=uninstall` delete exactly the files recorded at install (fallback: RomM's file list at the install placement) plus folders left empty — never saves/states or foreign files — then clean the launcher (`LauncherGameRemover`) and report `done`/`not_installed`/`failed`. Collections marked "Sync to device" in RomM (`GET /api/devices/{id}/collections`, socket `collections:changed`) are reconciled by `core/.../collections/CollectionReconciler.kt`: missing members are installed through the push pipeline, each rom carries provenance markers (`manual` for pushes, hand downloads and anything already present; `collection:<kind>:<id>` per collection) and is uninstalled only when its last marker goes. On Linux the launcher collection is an ES-DE custom collection (`desktop/.../EsdeCollections.kt`: `custom-<name>.cfg` + `CollectionSystemsCustom`, edited only while ES-DE is closed); on Android a Cocoon collection.
 
 ---
 
@@ -127,7 +129,8 @@ core/src/main/kotlin/es/davidrg/rommsync/core/   # Pure JVM — shared Android +
 ├── sync/platform/       # Per-emulator save handlers (RetroArch, melonDS, PS2, PS3, 3DS...)
 ├── download/            # PlatformFolders (RomM slug -> ES-DE/Cocoon folder)
 ├── auth/                # DevicePairing (RomM device pairing flow)
-├── install/             # InstallClient (push-install from RomM)
+├── install/             # InstallClient (push-install / uninstall from RomM)
+├── collections/         # CollectionReconciler ("Sync to device" collections, provenance)
 └── util/                # RootShell, ROM header reading...
 
 app/src/main/java/es/davidrg/rommsync/           # Android

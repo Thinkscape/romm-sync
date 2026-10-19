@@ -320,6 +320,134 @@ class InstallClientTest {
         }
     }
 
+    // ── Uninstall ───────────────────────────────────────────────────────
+
+    private val records = mutableMapOf<Int, InstalledRom>()
+    private val markers = mutableMapOf<Int, Set<String>>()
+    private val removed = mutableListOf<Pair<Int, String>>()
+    private val uninstalled = mutableListOf<Triple<String?, Int, String>>()
+
+    private fun trackingClient() = InstallClient(
+        baseUrl = server.url("/").toString(),
+        token = "rmm_device",
+        deviceId = DEVICE,
+        romsRoot = { root.path },
+        downloadsAllowed = { true },
+        store = object : InstalledRomStore {
+            override fun recordInstalled(rom: RomDetailDto, primaryFile: File, files: List<File>) {
+                records[rom.id] = InstalledRom(rom.id, rom.platformSlug, primaryFile, files)
+            }
+
+            override fun installed(romId: Int) = records[romId]
+            override fun forgetInstalled(romId: Int) {
+                records.remove(romId)
+            }
+        },
+        listener = object : InstallListener {
+            override fun onUninstallFinished(requestId: String?, romId: Int, status: String, reason: String?, files: List<File>) {
+                uninstalled += Triple(requestId, romId, status)
+            }
+        },
+        httpClient = OkHttpClient(),
+        logger = { logs += it },
+        provenance = object : es.davidrg.rommsync.core.collections.RomProvenanceStore {
+            override fun markers(romId: Int) = markers[romId].orEmpty()
+            override fun setMarkers(romId: Int, markers: Set<String>) {
+                this@InstallClientTest.markers[romId] = markers
+            }
+
+            override fun allMarkers() = markers.filterValues { it.isNotEmpty() }
+        },
+        gameRemover = object : es.davidrg.rommsync.core.collections.LauncherGameRemover {
+            override fun onRomRemoved(romId: Int, platformFolder: String, files: List<File>) {
+                removed += romId to platformFolder
+            }
+        },
+    )
+
+    private fun uninstallClaim(id: String, romId: Int) {
+        claimBody = """[{"id":"$id","rom_id":$romId,"file_ids":[],"status":"taken","reason":null,"action":"uninstall"}]"""
+    }
+
+    @Test
+    fun `push records manual provenance`() = runBlocking {
+        val bytes = "nes".toByteArray()
+        contents[11] = bytes
+        roms[1] = romJson(1, "nes", "Mario (USA).nes", "roms/nes", listOf(fileJson(11, "Mario (USA).nes", "roms/nes", bytes)))
+        claim("r1" to (1 to listOf(11)))
+
+        trackingClient().drainNow()
+
+        assertEquals(setOf("manual"), markers[1])
+    }
+
+    @Test
+    fun `uninstall deletes recorded files and empty folders but keeps foreign files`() = runBlocking {
+        val gameDir = File(root, "psx/Game.m3u").apply { mkdirs() }
+        val disc = File(gameDir, "Game (Disc 1).chd").apply { writeText("d1") }
+        val m3u = File(gameDir, "Game.m3u").apply { writeText("Game (Disc 1).chd") }
+        val other = File(root, "psx/Other.chd").apply { writeText("other") }
+        val saves = File(tmp.root, "saves/duckstation/Game.mcd").apply { parentFile.mkdirs(); writeText("save") }
+        records[5] = InstalledRom(5, "psx", gameDir, listOf(m3u, disc))
+        markers[5] = setOf("manual")
+        uninstallClaim("u5", 5)
+
+        trackingClient().drainNow()
+
+        assertFalse(gameDir.exists())
+        assertTrue(other.exists())
+        assertTrue(saves.exists())
+        assertEquals(listOf("u5" to """{"status":"done"}"""), reports.toList())
+        assertEquals(listOf(5 to "psx"), removed)
+        assertEquals(null, records[5])
+        assertEquals(emptySet<String>(), markers[5])
+        assertEquals(listOf(Triple<String?, Int, String>("u5", 5, "done")), uninstalled)
+    }
+
+    @Test
+    fun `uninstall keeps a game folder that holds files the install did not write`() = runBlocking {
+        val gameDir = File(root, "dos/Keen").apply { mkdirs() }
+        val exe = File(gameDir, "KEEN1.EXE").apply { writeText("exe") }
+        val userSave = File(gameDir, "SAVEGAM0.CK1").apply { writeText("save") }
+        records[6] = InstalledRom(6, "dos", gameDir, listOf(exe))
+        uninstallClaim("u6", 6)
+
+        trackingClient().drainNow()
+
+        assertFalse(exe.exists())
+        assertTrue(userSave.exists())
+        assertEquals(listOf("u6" to """{"status":"done"}"""), reports.toList())
+    }
+
+    @Test
+    fun `uninstall without a record falls back to romm's file list and reports not_installed when absent`() = runBlocking {
+        val bytes = "nes".toByteArray()
+        roms[7] = romJson(7, "nes", "Zelda.nes", "roms/nes", listOf(fileJson(71, "Zelda.nes", "roms/nes", bytes)))
+        val placed = File(root, "nes/Zelda.nes").apply { parentFile.mkdirs(); writeBytes(bytes) }
+        uninstallClaim("u7", 7)
+        trackingClient().drainNow()
+        assertFalse(placed.exists())
+        assertEquals(listOf("u7" to """{"status":"done"}"""), reports.toList())
+
+        reports.clear()
+        uninstallClaim("u8", 7)
+        trackingClient().drainNow()
+        assertTrue(reports.single().second.contains("\"status\":\"not_installed\""))
+    }
+
+    @Test
+    fun `uninstall refuses recorded paths outside the platform folder`() = runBlocking {
+        val dir = File(root, "snes").apply { mkdirs() }
+        val outside = File(tmp.root, "elsewhere.sfc").apply { writeText("x") }
+        records[9] = InstalledRom(9, "snes", File(dir, "Game.sfc"), listOf(outside))
+        uninstallClaim("u9", 9)
+
+        trackingClient().drainNow()
+
+        assertTrue(outside.exists())
+        assertTrue(reports.single().second.contains("\"status\":\"failed\""))
+    }
+
     companion object {
         private const val DEVICE = "dev-1"
     }

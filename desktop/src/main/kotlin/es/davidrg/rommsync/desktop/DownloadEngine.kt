@@ -179,6 +179,8 @@ class DownloadEngine(
                 localPath = plan.primary.absolutePath,
             ),
         )
+        // Downloaded by hand: collection sync must never remove it.
+        library?.markManual(rom.id)
         return Result(tr("download.done_path", rom.name, plan.primary.absolutePath))
     }
 
@@ -236,6 +238,7 @@ class DownloadEngine(
                 localPath = localPath.absolutePath,
             ),
         )
+        library?.markManual(rom.id)
     }
 
     private fun extractZipStream(

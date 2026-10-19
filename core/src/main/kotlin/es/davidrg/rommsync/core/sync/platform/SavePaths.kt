@@ -120,7 +120,8 @@ object SavePaths {
      *   ARMSX2 (the PS2 default) `ARMSX2/` with folder cards in `memcards/`;
      * - Dolphin, Eden and NetherSX2 keep their app-specific
      *   `Android/data/<pkg>/files` tree on internal storage [internalRoot]
-     *   (unreadable on Android 13 without root).
+     *   (unreadable on Android 13 without root; Dolphin and Eden are reached
+     *   through a tree grant on their own DocumentsProvider root instead).
      */
     fun android(sdRoot: String, internalRoot: String = ANDROID_INTERNAL_ROOT): SaveProfile {
         fun sd(relative: String) = File(sdRoot, relative).path

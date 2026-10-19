@@ -1,5 +1,6 @@
 package es.davidrg.rommsync.data.install
 
+import es.davidrg.rommsync.core.install.InstalledRom
 import es.davidrg.rommsync.core.install.InstalledRomStore
 import es.davidrg.rommsync.core.remote.dto.RomDetailDto
 import es.davidrg.rommsync.data.local.dao.RomDao
@@ -19,6 +20,19 @@ class RoomInstalledRomStore(private val romDao: RomDao) : InstalledRomStore {
 
     override fun recordInstalled(rom: RomDetailDto, primaryFile: File, files: List<File>) {
         runBlocking { romDao.insertDownloadedRom(toEntity(rom, primaryFile, files, romDao.getDownloadedRom(rom.id))) }
+    }
+
+    /**
+     * The recorded install: `localPath` is the rom file, or the game folder for
+     * multi-file roms, so it alone covers every file the install wrote.
+     */
+    override fun installed(romId: Int): InstalledRom? = runBlocking { romDao.getDownloadedRom(romId) }?.let { row ->
+        val primary = File(row.localPath)
+        InstalledRom(romId = row.romId, platformSlug = row.platformSlug, primary = primary, files = listOf(primary))
+    }
+
+    override fun forgetInstalled(romId: Int) {
+        runBlocking { romDao.deleteDownloadedRom(romId) }
     }
 
     companion object {

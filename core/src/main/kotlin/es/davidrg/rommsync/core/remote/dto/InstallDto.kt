@@ -9,7 +9,8 @@ import com.squareup.moshi.JsonClass
 
 /**
  * One install request as served by RomM. The id is a string on the server
- * (`InstallRequestSchema.id: str`).
+ * (`InstallRequestSchema.id: str`). [action] is `install` (default; servers
+ * without uninstall support omit it) or `uninstall`.
  */
 @JsonClass(generateAdapter = true)
 data class InstallRequestDto(
@@ -18,9 +19,13 @@ data class InstallRequestDto(
     @Json(name = "file_ids") val fileIds: List<Int> = emptyList(),
     @Json(name = "status") val status: String,
     @Json(name = "reason") val reason: String? = null,
+    @Json(name = "action") val action: String = "install",
 )
 
-/** status: `done`, `already_installed` or `failed`; reason at most 500 chars. */
+/**
+ * status: `done`, `already_installed`, `not_installed` (uninstall found nothing
+ * to remove) or `failed`; reason at most 500 chars.
+ */
 @JsonClass(generateAdapter = true)
 data class InstallReportRequest(
     @Json(name = "status") val status: String,
