@@ -101,10 +101,31 @@ class CocoonRescanService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val type = event.eventType
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            trackEsdeFront()
             if (flowJob?.isActive != true && anyWorkDue()) {
-                scheduleEvaluate(FOREGROUND_SETTLE_MS)
+                // A stale ES-DE is restarted right away, before the user starts browsing it; later
+                // window events of its arrival must not push that check back.
+                val esdeJustArrived = esdeFrontSince != 0L && System.currentTimeMillis() - esdeFrontSince < ESDE_FRONT_GRACE_MS
+                scheduleEvaluate(if (esdeJustArrived && EsdeReloader.isDue(this)) ESDE_FRONT_CHECK_MS else FOREGROUND_SETTLE_MS)
             }
         }
+    }
+
+    /** Wall-clock time ES-DE's window came to the front (0 = not on screen). */
+    @Volatile
+    private var esdeFrontSince = 0L
+    private var lastEsdeWait: String? = null
+
+    /** Tracks [esdeFrontSince]; true when ES-DE's window just appeared. */
+    private fun trackEsdeFront(): Boolean {
+        val inFront = topAppWindows().any { it.root?.packageName?.toString() == EsdeReloader.ESDE_PACKAGE }
+        if (!inFront) {
+            esdeFrontSince = 0L
+            return false
+        }
+        if (esdeFrontSince != 0L) return false
+        esdeFrontSince = System.currentTimeMillis()
+        return true
     }
 
     /** Called by [CocoonAutoImport] when installs have settled. */
@@ -188,13 +209,18 @@ class CocoonRescanService : AccessibilityService() {
     /**
      * Runs a due ES-DE refresh ([EsdeReloader]) unless a game or another app is in
      * front: ES-DE not on screen → edits applied (done when ES-DE is not running);
-     * ES-DE idle and focused in front → [esdeRestartFlow]. Returns true when the
-     * restart flow took the screen.
+     * ES-DE idle and focused in front → [esdeRestartFlow], either within
+     * [ESDE_FRONT_GRACE_MS] of ES-DE coming to the front (a stale copy resumed from
+     * the background) or after a change that arrived while it was in front (5 s
+     * debounce). A stale copy the user is already browsing is left alone until it
+     * next comes to the front. Returns true when the restart flow took the screen.
      */
     private fun evaluateEsde(): Boolean {
         if (!EsdeReloader.isDue(this)) return false
         fun waiting(reason: String): Boolean {
-            Log.i(TAG, "ES-DE refresh pending, waiting: $reason")
+            // Window events re-evaluate often; log each reason once.
+            if (reason != lastEsdeWait) Log.i(TAG, "ES-DE refresh pending, waiting: $reason")
+            lastEsdeWait = reason
             return false
         }
         if (!getSystemService(PowerManager::class.java).isInteractive) return waiting("screen off")
@@ -206,6 +232,7 @@ class CocoonRescanService : AccessibilityService() {
         val generation = EsdeReloader.pendingGeneration(this)
         val esde = top.firstOrNull { it.second == EsdeReloader.ESDE_PACKAGE }?.first
         if (esde == null) {
+            esdeFrontSince = 0L
             EsdeReloader.refreshOffScreen(this, generation)
             return false
         }
@@ -213,8 +240,19 @@ class CocoonRescanService : AccessibilityService() {
             EsdeReloader.clear(this, generation, "es-de refreshed (ES-DE was started after the last change)")
             return false
         }
+        val now = System.currentTimeMillis()
+        val frontSince = esdeFrontSince.takeIf { it != 0L } ?: now.also { esdeFrontSince = it }
+        val inGrace = now - frontSince < ESDE_FRONT_GRACE_MS
+        if (EsdeReloader.lastChangeAt(this) < frontSince && !inGrace) {
+            return waiting("ES-DE in use since it came to the front; restart when it next comes to the front")
+        }
         // Back goes to the focused window; with Cocoon's bottom screen focused it would reach Cocoon.
-        if (!esde.isFocused) return waiting("ES-DE is not the focused window")
+        if (!esde.isFocused) {
+            if (inGrace) scheduleEvaluate(ESDE_FRONT_CHECK_MS)
+            return waiting("ES-DE is not the focused window")
+        }
+        lastEsdeWait = null
+        Log.i(TAG, "ES-DE restart trigger ${now - frontSince} ms after ES-DE came to the front")
         val displayId = esde.displayIdCompat()
         flowJob = scope.launch { esdeRestartFlow(generation, displayId) }.also { job ->
             job.invokeOnCompletion { cause ->
@@ -699,6 +737,9 @@ class CocoonRescanService : AccessibilityService() {
         private const val ESDE_QUIT_TIMEOUT_MS = 5_000L
         private const val ESDE_START_TIMEOUT_MS = 30_000L
         private const val MAX_GRID_SCROLLS = 10
+        /** A stale ES-DE is restarted only this soon after it comes to the front (before the user browses). */
+        private const val ESDE_FRONT_GRACE_MS = 1_500L
+        private const val ESDE_FRONT_CHECK_MS = 150L
         private const val PREFS = "cocoon_auto_import"
         private const val KEY_ROW = "settings_pod_row"
         private const val KEY_COL = "settings_pod_col"

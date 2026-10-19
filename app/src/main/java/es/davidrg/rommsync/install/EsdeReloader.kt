@@ -27,17 +27,21 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * ES-DE reads its ROM folders, gamelists and custom collections only at startup
  * (Utilities → Rescan ROM directory aside); it has no reload intent, IPC or file
  * watcher, and Android only lets an app kill its own background processes. A
- * refresh therefore means a new ES-DE process, decided by [CocoonRescanService]
- * from the windows on screen once a change has settled ([SETTLE_MS]):
+ * copy resumed from the background does not re-read anything (verified: its log
+ * shows no parsing on resume and its game count stays that of its start), so every
+ * install, uninstall and collection change needs a new ES-DE process, decided by
+ * [CocoonRescanService] from the windows on screen once a change has settled
+ * ([SETTLE_MS]):
  *
- * - ES-DE idle in front (and focused): the service presses Back until ES-DE quits
- *   ("Back button exits app", on by default; ES-DE logs "cleanly shutting down"),
- *   runs the queued edits of ES-DE's files and starts ES-DE again on the same
- *   display. ES-DE comes back on its system view after ~3 s.
+ * - ES-DE idle in front (and focused) when the change settles: the service presses
+ *   Back until ES-DE quits ("Back button exits app", on by default; ES-DE logs
+ *   "cleanly shutting down"), runs the queued edits of ES-DE's files and starts
+ *   ES-DE again on the same display.
  * - ES-DE not on screen: the queued edits run now. If ES-DE's log ends with its
- *   clean shutdown it is not running and the refresh is done; otherwise it may be
- *   alive in the background and is restarted as above when it comes to the front,
- *   unless it was started again after the change (its log restarts on every start).
+ *   clean shutdown it is not running and the refresh is done; otherwise the stale
+ *   copy is restarted as above the moment it comes back to the front (before the
+ *   user browses it), unless it was started again after the change (its log
+ *   restarts on every start). Missed that moment, it waits for the next one.
  * - Any other app in front (an emulator launched from ES-DE or Cocoon), the screen
  *   off or locked: the refresh waits. A game is never interrupted.
  *
@@ -161,6 +165,9 @@ object EsdeReloader {
     fun isDue(context: Context): Boolean = esdeVersion(context) != null && marker(context).isDue()
 
     fun pendingGeneration(context: Context): Long = marker(context).generation
+
+    /** Wall-clock time of the latest change (0 when none). */
+    fun lastChangeAt(context: Context): Long = marker(context).lastInstallAt
 
     fun hasQueuedEdits(): Boolean = edits.isNotEmpty()
 
