@@ -16,6 +16,13 @@ interface LauncherCollectionWriter {
     fun write(collection: DeviceCollection, members: List<CollectionMember>, cover: java.io.File?)
     /** Remove a collection this client created (no-op otherwise). */
     fun remove(key: String, name: String)
+
+    /**
+     * Names the launchers this writer currently targets. Part of the reconciler's
+     * signature, so a launcher that appears later (ES-DE installed next to Cocoon)
+     * receives every collection once. Empty for single-launcher writers.
+     */
+    fun signatureTag(): String = ""
 }
 
 interface LauncherGameRemover {

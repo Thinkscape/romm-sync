@@ -1,6 +1,7 @@
 package es.davidrg.rommsync.install
 
 import android.accessibilityservice.AccessibilityService
+import android.app.ActivityOptions
 import android.accessibilityservice.GestureDescription
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
@@ -50,6 +51,8 @@ import kotlin.coroutines.resume
  *
  * Any mismatch or timeout backs out to Cocoon's home screen and posts the
  * manual-rescan notification. Every step is logged under [TAG].
+ *
+ * The same service decides when ES-DE may be refreshed ([EsdeReloader], [evaluateEsde]).
  */
 class CocoonRescanService : AccessibilityService() {
 
@@ -114,7 +117,13 @@ class CocoonRescanService : AccessibilityService() {
         scope.launch { scheduleEvaluate(FOREGROUND_SETTLE_MS) }
     }
 
-    private fun anyWorkDue(): Boolean = CocoonAutoImport.isDue(this) || CocoonCollections.isDue(this)
+    /** Called by [EsdeReloader] when an ES-DE refresh became due. */
+    fun onEsdeWorkPending() {
+        scope.launch { scheduleEvaluate(0L) }
+    }
+
+    private fun anyWorkDue(): Boolean =
+        CocoonAutoImport.isDue(this) || CocoonCollections.isDue(this) || EsdeReloader.isDue(this)
 
     private fun scheduleEvaluate(delayMs: Long) {
         if (flowJob?.isActive == true) return
@@ -132,6 +141,7 @@ class CocoonRescanService : AccessibilityService() {
      */
     private fun evaluate() {
         if (flowJob?.isActive == true) return
+        if (evaluateEsde()) return
         val rescan = CocoonAutoImport.isDue(this)
         val folderWork = !rescan && CocoonCollections.isDue(this)
         if (folderWork && CocoonAutoImport.isSettling(this)) {
@@ -173,6 +183,99 @@ class CocoonRescanService : AccessibilityService() {
         // Cocoon's folder dialogs and keyboard are drawn inside its home window.
         if (CocoonFolderFlow(this).dialogOpen()) return "a Cocoon dialog is open"
         return null
+    }
+
+    /**
+     * Runs a due ES-DE refresh ([EsdeReloader]) unless a game or another app is in
+     * front: ES-DE not on screen → edits applied (done when ES-DE is not running);
+     * ES-DE idle and focused in front → [esdeRestartFlow]. Returns true when the
+     * restart flow took the screen.
+     */
+    private fun evaluateEsde(): Boolean {
+        if (!EsdeReloader.isDue(this)) return false
+        fun waiting(reason: String): Boolean {
+            Log.i(TAG, "ES-DE refresh pending, waiting: $reason")
+            return false
+        }
+        if (!getSystemService(PowerManager::class.java).isInteractive) return waiting("screen off")
+        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) return waiting("device locked")
+        val top = topAppWindows().map { it to (it.root?.packageName?.toString() ?: "an unreadable window") }
+        top.map { it.second }
+            .firstOrNull { it != EsdeReloader.ESDE_PACKAGE && it != CocoonAutoImport.COCOON_PACKAGE }
+            ?.let { return waiting("foreground app is $it") }
+        val generation = EsdeReloader.pendingGeneration(this)
+        val esde = top.firstOrNull { it.second == EsdeReloader.ESDE_PACKAGE }?.first
+        if (esde == null) {
+            EsdeReloader.refreshOffScreen(this, generation)
+            return false
+        }
+        if (EsdeReloader.startedSinceChange(this)) {
+            EsdeReloader.clear(this, generation, "es-de refreshed (ES-DE was started after the last change)")
+            return false
+        }
+        // Back goes to the focused window; with Cocoon's bottom screen focused it would reach Cocoon.
+        if (!esde.isFocused) return waiting("ES-DE is not the focused window")
+        val displayId = esde.displayIdCompat()
+        flowJob = scope.launch { esdeRestartFlow(generation, displayId) }.also { job ->
+            job.invokeOnCompletion { cause ->
+                if (cause == null) scope.launch { scheduleEvaluate(FOREGROUND_SETTLE_MS) }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Quits the idle ES-DE with Back (system view: "Back button exits app"; in a
+     * gamelist or menu the first presses go back up), applies the queued edits and
+     * starts ES-DE again on [displayId]. Confirmed by ES-DE's log starting over.
+     */
+    private suspend fun esdeRestartFlow(generation: Long, displayId: Int) {
+        val started = SystemClock.elapsedRealtime()
+        val headBefore = EsdeReloader.logHead(this)
+        Log.i(TAG, "ES-DE idle in front on display $displayId: restarting it (generation $generation)")
+        fun esdeWindow() = topAppWindows().firstOrNull { it.root?.packageName?.toString() == EsdeReloader.ESDE_PACKAGE }
+        var presses = 0
+        while (esdeWindow() != null && presses < ESDE_MAX_BACK_PRESSES) {
+            val front = busyApp()
+            if (front != null && front != EsdeReloader.ESDE_PACKAGE) {
+                Log.i(TAG, "ES-DE restart aborted: foreground changed to $front; stays pending")
+                return
+            }
+            if (esdeWindow()?.isFocused != true) {
+                Log.i(TAG, "ES-DE restart aborted: ES-DE lost focus; stays pending")
+                return
+            }
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            presses++
+            delay(ESDE_BACK_INTERVAL_MS)
+        }
+        if (esdeWindow() != null) {
+            EsdeReloader.recordFailure(this, generation, "ES-DE still on screen after $presses Back presses " +
+                "(is 'Back button exits app' off?)")
+            return
+        }
+        // The window goes before the process: wait for ES-DE's clean shutdown.
+        val quitBy = SystemClock.elapsedRealtime() + ESDE_QUIT_TIMEOUT_MS
+        while (EsdeReloader.isRunning(this) && SystemClock.elapsedRealtime() < quitBy) delay(200)
+        val applied = EsdeReloader.applyEdits(this)
+        Log.i(TAG, "ES-DE quit after $presses Back presses; $applied edits applied; starting it on display $displayId")
+        try {
+            startActivity(EsdeReloader.launchIntent(), ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
+        } catch (e: Exception) {
+            EsdeReloader.recordFailure(this, generation, "start: ${e.message}")
+            return
+        }
+        val confirmBy = SystemClock.elapsedRealtime() + ESDE_START_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < confirmBy) {
+            val head = EsdeReloader.logHead(this)
+            if (head != null && head != headBefore) {
+                EsdeReloader.clear(this, generation,
+                    "es-de refreshed (restart in ${SystemClock.elapsedRealtime() - started} ms, $presses Back presses)")
+                return
+            }
+            delay(300)
+        }
+        EsdeReloader.recordFailure(this, generation, "ES-DE did not start again within ${ESDE_START_TIMEOUT_MS / 1000} s")
     }
 
     // ── The flow ────────────────────────────────────────────────────────
@@ -250,11 +353,12 @@ class CocoonRescanService : AccessibilityService() {
     /**
      * Cocoon may show its home grid on either screen (the Thor's bottom screen runs
      * ExternalDisplayActivity): work on the window that holds the Settings tile,
-     * else the focused Cocoon window.
+     * else the one with the grid's "Y" hint, else the focused Cocoon window.
      */
     internal fun chooseHomeDisplay() {
         val cocoon = cocoonWindows()
         val window = cocoon.firstOrNull { w -> w.root?.let { findSettingsTile(it) } != null }
+            ?: cocoon.firstOrNull { w -> w.root?.let { root -> findNode(root) { it.contentDescription?.toString() == "Y" } } != null }
             ?: cocoon.firstOrNull { it.isFocused }
             ?: cocoon.firstOrNull()
         activeDisplay = window?.displayIdCompat() ?: Display.DEFAULT_DISPLAY
@@ -274,19 +378,14 @@ class CocoonRescanService : AccessibilityService() {
     }
 
     private suspend fun openSettingsFromHome() {
-        // Visible grid tiles expose their name as content description ("Settings", "DOS", "Empty grid slot").
-        // A click focuses a tile and a second click on the focused tile launches it.
-        val viaTile = step("click the Settings pod tile") {
-            var opened = false
-            repeat(2) {
-                if (opened) return@repeat
-                val tile = mainAppWindow()?.root?.let(::findSettingsTile) ?: return@repeat
-                tile.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                opened = waitFor(TILE_LAUNCH_WAIT_MS) { if (settingsOpen()) true else null } == true
-            }
-            opened
+        if (step("click the Settings pod tile") { clickSettingsTile() }) return
+        // A grid scrolled away from its start hides the pod; accessibility scrolling needs no
+        // input focus (D-pad actions go to the focused display, which may be the other screen).
+        if (step("scroll the grid to its start") { scrollToSettingsTile() } &&
+            step("click the Settings pod tile") { clickSettingsTile() }
+        ) {
+            return
         }
-        if (viaTile) return
         Log.i(TAG, "Settings tile not visible; searching the grid with the D-pad")
         step("focus the Settings pod") {
             if (!focusSettingsPod()) throw FlowFailure("Settings pod not found on the home screen")
@@ -297,6 +396,37 @@ class CocoonRescanService : AccessibilityService() {
             waitFor(UI_TIMEOUT_MS) { if (settingsOpen()) true else null }
                 ?: throw FlowFailure("Settings did not open")
         }
+    }
+
+    /** Visible grid tiles expose their name as content description ("Settings", "DOS", "Empty grid slot").
+     *  A click focuses a tile and a second click on the focused tile launches it. */
+    private suspend fun clickSettingsTile(): Boolean {
+        repeat(2) {
+            val tile = mainAppWindow()?.root?.let(::findSettingsTile) ?: return false
+            tile.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (waitFor(TILE_LAUNCH_WAIT_MS) { if (settingsOpen()) true else null } == true) return true
+        }
+        return false
+    }
+
+    /** Scrolls each Cocoon window's grid back until the Settings tile shows; follows that window. */
+    private suspend fun scrollToSettingsTile(): Boolean {
+        for (displayId in cocoonWindows().map { it.displayIdCompat() }) {
+            for (attempt in 0..MAX_GRID_SCROLLS) {
+                val root = cocoonWindows().firstOrNull { it.displayIdCompat() == displayId }?.root ?: break
+                if (findSettingsTile(root) != null) {
+                    activeDisplay = displayId
+                    Log.i(TAG, "Settings tile visible on display $displayId after $attempt scrolls")
+                    return true
+                }
+                val grid = findNode(root) { node ->
+                    node.isScrollable && node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD }
+                } ?: break
+                if (!grid.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) break
+                delay(STEP_DELAY_MS)
+            }
+        }
+        return false
     }
 
     private suspend fun startScan() = step("start the scan of all platforms") {
@@ -564,6 +694,11 @@ class CocoonRescanService : AccessibilityService() {
 
     companion object {
         private const val TAG = "CocoonAutoImport"
+        private const val ESDE_MAX_BACK_PRESSES = 6
+        private const val ESDE_BACK_INTERVAL_MS = 700L
+        private const val ESDE_QUIT_TIMEOUT_MS = 5_000L
+        private const val ESDE_START_TIMEOUT_MS = 30_000L
+        private const val MAX_GRID_SCROLLS = 10
         private const val PREFS = "cocoon_auto_import"
         private const val KEY_ROW = "settings_pod_row"
         private const val KEY_COL = "settings_pod_col"

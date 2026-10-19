@@ -1,8 +1,7 @@
-package es.davidrg.rommsync.desktop
+package es.davidrg.rommsync.core.metadata
 
 import es.davidrg.rommsync.core.collections.CollectionMember
 import es.davidrg.rommsync.core.collections.DeviceCollection
-import es.davidrg.rommsync.core.metadata.EsdeTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

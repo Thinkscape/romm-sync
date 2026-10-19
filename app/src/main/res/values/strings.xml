@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">RomM Sync</string>
-    <string name="cocoon_rescan_service_label">RomM Sync: Cocoon auto-import</string>
-    <string name="cocoon_rescan_service_description">After RomM pushes games to this device, opens Cocoon → Settings → Library &amp; data → Rescan Games so they appear in Cocoon. Runs only while Cocoon is on screen and no game is running.</string>
+    <string name="cocoon_rescan_service_label">RomM Sync: Cocoon and ES-DE auto-import</string>
+    <string name="cocoon_rescan_service_description">After RomM pushes games to this device, opens Cocoon → Settings → Library &amp; data → Rescan Games so they appear in Cocoon, and restarts ES-DE (when installed) so it rescans its games. Runs only while Cocoon or an idle ES-DE is on screen and no game is running.</string>
 </resources>

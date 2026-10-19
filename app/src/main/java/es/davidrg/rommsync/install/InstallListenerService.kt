@@ -26,6 +26,8 @@ import es.davidrg.rommsync.R
 import es.davidrg.rommsync.RomMSyncApplication
 import es.davidrg.rommsync.core.auth.PairedDevice
 import es.davidrg.rommsync.core.collections.CollectionReconciler
+import es.davidrg.rommsync.core.collections.CompositeCollectionWriter
+import es.davidrg.rommsync.core.collections.CompositeGameRemover
 import es.davidrg.rommsync.core.i18n.tr
 import es.davidrg.rommsync.core.install.InstallClient
 import es.davidrg.rommsync.core.install.InstallListener
@@ -67,6 +69,8 @@ class InstallListenerService : Service() {
 
     /** Last progress percentage shown per request; avoids flooding the notification manager. */
     private val lastProgress = ConcurrentHashMap<String, Int>()
+    /** Installs whose ES-DE refresh waits for their media export ([Listener.onMetadataExported]). */
+    private val awaitingExport: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -172,14 +176,19 @@ class InstallListenerService : Service() {
                 }
             },
             provenance = collectionStore,
-            gameRemover = CocoonGameRemover(applicationContext, store),
+            // Cocoon (rescan + its ES-DE metadata) and ES-DE itself (collections, refresh).
+            gameRemover = CompositeGameRemover(
+                listOf(CocoonGameRemover(applicationContext, store), EsdeReloader.gameRemover(applicationContext)),
+            ),
         )
         val newReconciler = CollectionReconciler(
             backend = newClient,
             installed = container.installedRomStore,
             provenance = collectionStore,
             state = collectionStore,
-            writer = CocoonCollectionWriter(applicationContext),
+            writer = CompositeCollectionWriter(
+                listOf(CocoonCollectionWriter(applicationContext), EsdeReloader.collectionWriter(applicationContext)),
+            ) { if (EsdeReloader.esdeDir(applicationContext) != null) "es-de" else "" },
             coverDir = File(cacheDir, "collection-covers"),
             logger = { Log.i(TAG, it) },
         )
@@ -259,6 +268,12 @@ class InstallListenerService : Service() {
                     null,
                 )
                 CocoonAutoImport.onLibraryChanged(applicationContext)
+                // ES-DE is refreshed once the game's gamelist entry and media are on disk.
+                if (container.settingsDataStore.getEsdePushMediaEnabledBlocking()) {
+                    awaitingExport.add(requestId)
+                } else {
+                    EsdeReloader.onChanged(applicationContext)
+                }
             }
         }
 
@@ -289,6 +304,7 @@ class InstallListenerService : Service() {
         }
 
         override fun onMetadataExported(requestId: String, romId: Int, mediaFiles: Int, failures: List<String>) {
+            if (awaitingExport.remove(requestId)) EsdeReloader.onChanged(applicationContext)
             if (failures.isEmpty()) {
                 Log.i(TAG, "install $requestId: ES-DE media ready for rom $romId ($mediaFiles files)")
             } else {

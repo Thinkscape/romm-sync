@@ -1,5 +1,6 @@
 package es.davidrg.rommsync.desktop
 
+import es.davidrg.rommsync.core.metadata.EsdeEditor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -198,11 +199,6 @@ class LauncherRefresher(
             return exe?.let { listOf(it) + esde.cmdline.drop(1) }
         }
     }
-}
-
-/** Queues a change to ES-DE's own files; it runs only while ES-DE is not running. */
-fun interface EsdeEditor {
-    fun submit(description: String, edit: () -> Unit)
 }
 
 /**

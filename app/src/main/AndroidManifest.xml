@@ -34,11 +34,12 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Cocoon auto-import: version check and launch intent.
+    <!-- Cocoon auto-import and ES-DE refresh: version check and launch intent.
          Dolphin/Eden DocumentsProviders: save folders granted on their roots
          (EmulatorDocumentProviders). -->
     <queries>
         <package android:name="rip.moth.cocoonshell" />
+        <package android:name="org.es_de.frontend" />
         <provider android:authorities="org.dolphinemu.dolphinemu.user" />
         <provider android:authorities="dev.eden.eden_emulator.user" />
     </queries>

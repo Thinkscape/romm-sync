@@ -5,6 +5,11 @@ import es.davidrg.rommsync.core.auth.PairingDeniedException
 import es.davidrg.rommsync.core.auth.PairingExpiredException
 import es.davidrg.rommsync.core.install.InstallClient
 import es.davidrg.rommsync.core.install.InstallListener
+import es.davidrg.rommsync.core.metadata.EsdeCollectionLedger
+import es.davidrg.rommsync.core.metadata.EsdeCollectionWriter
+import es.davidrg.rommsync.core.metadata.EsdeGameRemover
+import es.davidrg.rommsync.core.metadata.EsdeRomPaths
+import es.davidrg.rommsync.core.metadata.EsdeSettings
 import es.davidrg.rommsync.core.sync.ConflictPolicy
 import es.davidrg.rommsync.core.sync.SaveBackupManager
 import kotlinx.coroutines.CancellationException

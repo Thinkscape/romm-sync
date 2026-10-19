@@ -8,18 +8,20 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import es.davidrg.rommsync.BuildConfig
 import es.davidrg.rommsync.core.collections.CollectionMember
+import es.davidrg.rommsync.core.collections.CompositeCollectionWriter
 import es.davidrg.rommsync.core.collections.DeviceCollection
 import java.io.File
 
 /**
- * Debug builds only: drives [CocoonCollectionWriter] without a RomM server, to
- * test the Cocoon folder flow on a device.
+ * Debug builds only: drives the launcher collection writers without a RomM
+ * server, to test the Cocoon folder flow and ES-DE custom collections on a device.
+ * `launcher` = `cocoon` (default), `esde` or `all`.
  *
  * ```
  * adb shell am broadcast -p es.davidrg.rommsync -a es.davidrg.rommsync.DEBUG_COCOON_FOLDER \
  *   --es op write --ei id 9001 --es name 'Test' --es files '/storage/X/ROMs/snes/a.sfc|/storage/X/ROMs/nes/b.nes' \
- *   [--es cover /sdcard/Download/cover.png]
- * adb shell am broadcast -p es.davidrg.rommsync -a es.davidrg.rommsync.DEBUG_COCOON_FOLDER --es op remove --ei id 9001
+ *   [--es cover /sdcard/Download/cover.png] [--es launcher esde]
+ * adb shell am broadcast -p es.davidrg.rommsync -a es.davidrg.rommsync.DEBUG_COCOON_FOLDER --es op remove --ei id 9001 [--es launcher esde]
  * ```
  */
 object CocoonFolderDebugTrigger {
@@ -63,7 +65,11 @@ object CocoonFolderDebugTrigger {
             return
         }
         val id = intent.getIntExtra("id", -1).takeIf { it >= 0 } ?: return
-        val writer = CocoonCollectionWriter(context)
+        val writer = when (intent.getStringExtra("launcher")) {
+            "esde" -> EsdeReloader.collectionWriter(context)
+            "all" -> CompositeCollectionWriter(listOf(CocoonCollectionWriter(context), EsdeReloader.collectionWriter(context)))
+            else -> CocoonCollectionWriter(context)
+        }
         val collection = DeviceCollection(
             kind = "collection",
             id = id,

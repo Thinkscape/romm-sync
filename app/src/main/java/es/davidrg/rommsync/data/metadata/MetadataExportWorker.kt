@@ -20,6 +20,7 @@ import es.davidrg.rommsync.core.metadata.EsdeMediaType
 import es.davidrg.rommsync.core.metadata.EsdeMetadata
 import es.davidrg.rommsync.core.remote.NetworkModule
 import es.davidrg.rommsync.data.local.SettingsDataStore
+import es.davidrg.rommsync.install.EsdeReloader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -172,6 +173,8 @@ class MetadataExportWorker(
             }
         }
 
+        // ES-DE reads gamelists only at startup.
+        EsdeReloader.onChanged(applicationContext)
         Result.success(workDataOf(
             KEY_MEDIA_DOWNLOADED to mediaDownloaded,
             KEY_MEDIA_SKIPPED to mediaSkipped,

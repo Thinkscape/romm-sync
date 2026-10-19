@@ -1,13 +1,9 @@
-package es.davidrg.rommsync.desktop
+package es.davidrg.rommsync.core.metadata
 
 import es.davidrg.rommsync.core.collections.CollectionMember
 import es.davidrg.rommsync.core.collections.DeviceCollection
 import es.davidrg.rommsync.core.collections.LauncherCollectionWriter
 import es.davidrg.rommsync.core.collections.LauncherGameRemover
-import es.davidrg.rommsync.core.metadata.EsdeGamelist
-import es.davidrg.rommsync.core.metadata.EsdeMetadata
-import es.davidrg.rommsync.core.metadata.EsdeRemoval
-import es.davidrg.rommsync.core.metadata.EsdeTarget
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -31,17 +27,23 @@ import java.util.Properties
  *    games …") and image (a random member) are generated at runtime
  *    (`updateCollectionFolderMetadata`); ES-DE reads no per-collection description or artwork
  *    file, only a theme can style a collection (by its lower-case name). The RomM
- *    description and cover are therefore not written on the Deck.
+ *    description and cover are therefore not written.
  *
  * ES-DE rewrites `es_settings.xml` itself (at startup and on menu changes) and the collection
  * files when a collection is edited in its UI, so every change here goes through an
- * [EsdeEditor], which runs it only while ES-DE is not running.
+ * [EsdeEditor], which runs it only while ES-DE is not running (Steam Deck daemon:
+ * `LauncherRefreshScheduler`; Android: `EsdeReloader`).
  *
  * Local overrides: games the user adds to a collection in ES-DE are kept (only lines this
  * client wrote are managed); a collection the user disabled in ES-DE stays disabled
  * (it is enabled once, when created); a collection is deleted on unsubscribe only when this
  * client created it and the user added nothing to it.
  */
+
+/** Queues a change to ES-DE's own files; it runs only while ES-DE is not running. */
+fun interface EsdeEditor {
+    fun submit(description: String, edit: () -> Unit)
+}
 
 /** `CollectionSystemsCustom` in ES-DE's `es_settings.xml` (no root element: edited line-wise). */
 object EsdeSettings {

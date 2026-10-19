@@ -184,7 +184,7 @@ class CollectionReconciler(
             val folder = record.primary.absoluteFile.parentFile?.name ?: return@mapNotNull null
             CollectionMember(romId, folder, record.files.ifEmpty { listOf(record.primary) })
         }
-        val signature = signature(collection, members)
+        val signature = signature(collection, members, writer.signatureTag())
         if (state.known()[collection.key]?.signature == signature) return false
         val cover = try {
             backend.downloadCover(collection, coverDir)
@@ -207,8 +207,8 @@ class CollectionReconciler(
     private fun log(message: String) = logger("collections: $message")
 
     companion object {
-        /** Stable digest of everything a launcher write depends on. */
-        internal fun signature(collection: DeviceCollection, members: List<CollectionMember>): String {
+        /** Stable digest of everything a launcher write depends on ([launchers]: [LauncherCollectionWriter.signatureTag]). */
+        internal fun signature(collection: DeviceCollection, members: List<CollectionMember>, launchers: String = ""): String {
             val text = buildString {
                 append(collection.name).append('\u0000')
                 append(collection.description.orEmpty()).append('\u0000')
@@ -219,6 +219,8 @@ class CollectionReconciler(
                     m.files.map { it.path }.sorted().forEach { append('|').append(it) }
                     append('\u0000')
                 }
+                // Absent for single-launcher writers, so their existing signatures stay valid.
+                if (launchers.isNotEmpty()) append("launchers=").append(launchers)
             }
             return MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
