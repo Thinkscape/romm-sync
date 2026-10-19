@@ -225,7 +225,7 @@ class CocoonRescanService : AccessibilityService() {
         }
         if (!getSystemService(PowerManager::class.java).isInteractive) return waiting("screen off")
         if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) return waiting("device locked")
-        val top = topAppWindows().map { it to (it.root?.packageName?.toString() ?: "an unreadable window") }
+        val top = topAppWindows().filterNot { isPassive(it) }.map { it to (it.root?.packageName?.toString() ?: "an unreadable window") }
         top.map { it.second }
             .firstOrNull { it != EsdeReloader.ESDE_PACKAGE && it != CocoonAutoImport.COCOON_PACKAGE }
             ?.let { return waiting("foreground app is $it") }
@@ -266,15 +266,19 @@ class CocoonRescanService : AccessibilityService() {
      * Quits the idle ES-DE with Back (system view: "Back button exits app"; in a
      * gamelist or menu the first presses go back up), applies the queued edits and
      * starts ES-DE again on [displayId]. Confirmed by ES-DE's log starting over.
+     * An ES-DE Companion shown on another display that closed itself with ES-DE's
+     * quit is started again on its display first, so ES-DE keeps the input focus.
      */
     private suspend fun esdeRestartFlow(generation: Long, displayId: Int) {
         val started = SystemClock.elapsedRealtime()
         val headBefore = EsdeReloader.logHead(this)
         Log.i(TAG, "ES-DE idle in front on display $displayId: restarting it (generation $generation)")
         fun esdeWindow() = topAppWindows().firstOrNull { it.root?.packageName?.toString() == EsdeReloader.ESDE_PACKAGE }
+        fun companionWindow() = topAppWindows().firstOrNull { it.root?.packageName?.toString() == ESDE_COMPANION_PACKAGE }
+        val companionDisplay = companionWindow()?.displayIdCompat()
         var presses = 0
         while (esdeWindow() != null && presses < ESDE_MAX_BACK_PRESSES) {
-            val front = busyApp()
+            val front = busyApp(allowCompanion = true)
             if (front != null && front != EsdeReloader.ESDE_PACKAGE) {
                 Log.i(TAG, "ES-DE restart aborted: foreground changed to $front; stays pending")
                 return
@@ -296,6 +300,20 @@ class CocoonRescanService : AccessibilityService() {
         val quitBy = SystemClock.elapsedRealtime() + ESDE_QUIT_TIMEOUT_MS
         while (EsdeReloader.isRunning(this) && SystemClock.elapsedRealtime() < quitBy) delay(200)
         val applied = EsdeReloader.applyEdits(this)
+        if (companionDisplay != null) {
+            // "Close Companion App on ES-DE Quit" reacts to the same log line; give it a moment.
+            val closedBy = SystemClock.elapsedRealtime() + COMPANION_CLOSE_WAIT_MS
+            while (companionWindow() != null && SystemClock.elapsedRealtime() < closedBy) delay(200)
+        }
+        if (companionDisplay != null && companionWindow() == null) {
+            Log.i(TAG, "ES-DE Companion closed with ES-DE; starting it on display $companionDisplay")
+            runCatching {
+                val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                    .setClassName(ESDE_COMPANION_PACKAGE, ESDE_COMPANION_ACTIVITY)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(companionDisplay).toBundle())
+            }.onFailure { Log.w(TAG, "ES-DE Companion start failed: ${it.message}") }
+        }
         Log.i(TAG, "ES-DE quit after $presses Back presses; $applied edits applied; starting it on display $displayId")
         try {
             startActivity(EsdeReloader.launchIntent(), ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
@@ -661,10 +679,22 @@ class CocoonRescanService : AccessibilityService() {
     internal fun cocoonWindows(): List<AccessibilityWindowInfo> =
         topAppWindows().filter { it.root?.packageName?.toString() == CocoonAutoImport.COCOON_PACKAGE }
 
-    /** A non-Cocoon app (an emulator, …) in front on any display, or null. */
-    internal fun busyApp(): String? = topAppWindows()
+    /**
+     * A non-Cocoon app (an emulator, …) in front on any display, or null. ES-DE Companion
+     * counts too (it covers Cocoon's grid) unless [allowCompanion] and it is passive.
+     */
+    internal fun busyApp(allowCompanion: Boolean = false): String? = topAppWindows()
+        .filterNot { allowCompanion && isPassive(it) }
         .mapNotNull { it.root?.packageName?.toString() }
         .firstOrNull { it != CocoonAutoImport.COCOON_PACKAGE && it != allowedForeignPackage }
+
+    /**
+     * ES-DE Companion showing ES-DE's context on the other screen: no blocker for the ES-DE
+     * restart unless it is the active window (global Back and D-pad actions would reach it).
+     * isFocused is per display on the Thor, so it is true for the companion too.
+     */
+    private fun isPassive(window: AccessibilityWindowInfo): Boolean =
+        !window.isActive && window.root?.packageName?.toString() == ESDE_COMPANION_PACKAGE
 
     /** Topmost application window on the display the flow currently works on. */
     internal fun mainAppWindow(): AccessibilityWindowInfo? {
@@ -745,6 +775,9 @@ class CocoonRescanService : AccessibilityService() {
         private const val KEY_COL = "settings_pod_col"
 
         internal const val COCOON_HOME_TITLE = "Cocoon"
+        internal const val ESDE_COMPANION_PACKAGE = "com.esde.companion"
+        private const val ESDE_COMPANION_ACTIVITY = "com.esde.companion.ui.MainActivity"
+        private const val COMPANION_CLOSE_WAIT_MS = 1_500L
         private const val SETTINGS_TITLE = "Settings"
         private const val SETTINGS_POD = "Settings"
         /** Present in every tile context menu (games and pods show "Launch", platform folders "Open"). */
