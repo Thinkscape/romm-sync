@@ -170,15 +170,25 @@ class CocoonRescanService : AccessibilityService() {
             scheduleEvaluate(FOREGROUND_SETTLE_MS)
             return
         }
-        if (!rescan && !folderWork) return
+        if (!rescan && !folderWork) {
+            // A failed folder pass waits out its backoff; nothing else would wake the service then.
+            CocoonCollections.backoffRemainingMs(this).takeIf { it > 0 }?.let { scheduleEvaluate(it + FOREGROUND_SETTLE_MS) }
+            return
+        }
         val settings = (application as RomMSyncApplication).container.settingsDataStore
         if (!settings.getCocoonAutoImportEnabledBlocking()) {
             CocoonAutoImport.discardPending(this)
             return
         }
+        if (getSystemService(PowerManager::class.java).isInteractive && uncoverCocoonGrid()) {
+            scheduleEvaluate(FOREGROUND_SETTLE_MS)
+            return
+        }
         val blocker = foregroundBlocker()
         if (blocker != null) {
             Log.i(TAG, "${if (rescan) "rescan" else "collection folder work"} pending, waiting: $blocker")
+            // Closing a Cocoon dialog or menu raises no window event: look again later.
+            if (blocker == DIALOG_BLOCKER) scheduleEvaluate(BLOCKED_RECHECK_MS)
             return
         }
         flowJob = scope.launch { if (rescan) runFlow() else CocoonFolderFlow(this@CocoonRescanService).run() }.also { job ->
@@ -202,8 +212,37 @@ class CocoonRescanService : AccessibilityService() {
             return "Cocoon shows '${it.title}' on display ${it.displayIdCompat()}, not its home screen"
         }
         // Cocoon's folder dialogs and keyboard are drawn inside its home window.
-        if (CocoonFolderFlow(this).dialogOpen()) return "a Cocoon dialog is open"
+        if (CocoonFolderFlow(this).dialogOpen()) return DIALOG_BLOCKER
         return null
+    }
+
+    /**
+     * ES-DE Companion left on Cocoon's second screen after ES-DE went to the
+     * background (it closes itself only when ES-DE quits, not when ES-DE is merely
+     * left with Home): with ES-DE on no display and the companion not the window
+     * the user is using, its context is stale and it covers Cocoon's home grid,
+     * which would hold every Cocoon flow. Brings Cocoon's second-screen home back
+     * in front of it on that display (the companion keeps running behind it and
+     * comes back with ES-DE). Returns true when it did so.
+     */
+    private fun uncoverCocoonGrid(): Boolean {
+        val top = topAppWindows()
+        if (top.any { it.root?.packageName?.toString() == EsdeReloader.ESDE_PACKAGE }) return false
+        if (top.any { it.root?.packageName?.toString().let { p -> p != CocoonAutoImport.COCOON_PACKAGE && p != ESDE_COMPANION_PACKAGE } }) return false
+        val companion = top.firstOrNull { it.root?.packageName?.toString() == ESDE_COMPANION_PACKAGE } ?: return false
+        if (companion.isActive) return false
+        val displayId = companion.displayIdCompat()
+        Log.i(TAG, "ES-DE Companion covers display $displayId while ES-DE is not on screen: bringing Cocoon's home back there")
+        return runCatching {
+            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_SECONDARY_HOME)
+                .setClassName(CocoonAutoImport.COCOON_PACKAGE, COCOON_SECOND_SCREEN_ACTIVITY)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
+            true
+        }.getOrElse {
+            Log.w(TAG, "could not bring Cocoon's home to display $displayId: ${it.message}")
+            false
+        }
     }
 
     /**
@@ -414,7 +453,7 @@ class CocoonRescanService : AccessibilityService() {
     internal fun chooseHomeDisplay() {
         val cocoon = cocoonWindows()
         val window = cocoon.firstOrNull { w -> w.root?.let { findSettingsTile(it) } != null }
-            ?: cocoon.firstOrNull { w -> w.root?.let { root -> findNode(root) { it.contentDescription?.toString() == "Y" } } != null }
+            ?: cocoon.firstOrNull { w -> w.root?.let(::hasGridBar) == true }
             ?: cocoon.firstOrNull { it.isFocused }
             ?: cocoon.firstOrNull()
         activeDisplay = window?.displayIdCompat() ?: Display.DEFAULT_DISPLAY
@@ -435,22 +474,46 @@ class CocoonRescanService : AccessibilityService() {
 
     private suspend fun openSettingsFromHome() {
         if (step("click the Settings pod tile") { clickSettingsTile() }) return
-        // A grid scrolled away from its start hides the pod; accessibility scrolling needs no
-        // input focus (D-pad actions go to the focused display, which may be the other screen).
-        if (step("scroll the grid to its start") { scrollToSettingsTile() } &&
-            step("click the Settings pod tile") { clickSettingsTile() }
-        ) {
-            return
+        // Grid scrolled to a later page: drag it back toward its start (the pod sits in the second
+        // column); a drag also rebuilds Cocoon's grid tree as clickable tiles.
+        val viaDrag = step("drag the grid back to the Settings pod") {
+            var previous: List<Pair<String, Rect>>? = null
+            var opened = false
+            for (drag in 0 until MAX_GRID_PAGES) {
+                val tiles = dragGrid(towardStart = true)
+                if (clickSettingsTile()) {
+                    Log.i(TAG, "Settings pod reached after ${drag + 1} drags")
+                    opened = true
+                    break
+                }
+                if (tiles == previous) break
+                previous = tiles
+            }
+            opened
         }
-        Log.i(TAG, "Settings tile not visible; searching the grid with the D-pad")
+        if (viaDrag) return
+        // Left out of the grid's tree: move the grid focus onto it with the D-pad (read back from
+        // the hero view) and launch it from its menu (pods offer "Top Screen" / "Bottom Screen").
         step("focus the Settings pod") {
-            if (!focusSettingsPod()) throw FlowFailure("Settings pod not found on the home screen")
+            if (!focusGridTile(SETTINGS_POD)) throw FlowFailure("Settings pod not found on the home grid")
         }
         step("launch Settings") {
-            openContextMenu() ?: throw FlowFailure("context menu did not open")
-            clickText("Launch")
-            waitFor(UI_TIMEOUT_MS) { if (settingsOpen()) true else null }
-                ?: throw FlowFailure("Settings did not open")
+            val menu = openFocusedMenu() ?: throw FlowFailure("context menu did not open")
+            if (contextMenuTitle(menu) != SETTINGS_POD) {
+                closeContextMenu()
+                throw FlowFailure("menu is for '${contextMenuTitle(menu)}', not the Settings pod")
+            }
+            // Launch → "Top Screen" / "Bottom Screen" submenu → Top Screen. Each entry takes two
+            // touches: the first moves the menu focus onto it, the second activates it.
+            for (touch in 0 until 6) {
+                if (settingsOpen()) return@step
+                val root = mainAppWindow()?.root?.also { it.refresh() } ?: break
+                val entry = findText(root, "Top Screen") ?: findText(root, "Launch") ?: break
+                val b = Rect().also { entry.getBoundsInScreen(it) }
+                tap(b.exactCenterX(), b.exactCenterY())
+                delay(STEP_DELAY_MS * 2)
+            }
+            waitFor(UI_TIMEOUT_MS) { if (settingsOpen()) true else null } ?: throw FlowFailure("Settings did not open")
         }
     }
 
@@ -458,31 +521,214 @@ class CocoonRescanService : AccessibilityService() {
      *  A click focuses a tile and a second click on the focused tile launches it. */
     private suspend fun clickSettingsTile(): Boolean {
         repeat(2) {
-            val tile = mainAppWindow()?.root?.let(::findSettingsTile) ?: return false
+            val tile = gridWindow()?.root?.let(::findSettingsTile) ?: return false
             tile.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             if (waitFor(TILE_LAUNCH_WAIT_MS) { if (settingsOpen()) true else null } == true) return true
         }
         return false
     }
 
-    /** Scrolls each Cocoon window's grid back until the Settings tile shows; follows that window. */
-    private suspend fun scrollToSettingsTile(): Boolean {
-        for (displayId in cocoonWindows().map { it.displayIdCompat() }) {
-            for (attempt in 0..MAX_GRID_SCROLLS) {
-                val root = cocoonWindows().firstOrNull { it.displayIdCompat() == displayId }?.root ?: break
-                if (findSettingsTile(root) != null) {
-                    activeDisplay = displayId
-                    Log.i(TAG, "Settings tile visible on display $displayId after $attempt scrolls")
+    // ── Home grid ───────────────────────────────────────────────────────
+
+    /**
+     * The Cocoon window that shows the home grid: the one with the bottom bar's
+     * "Y" hint (the other screen shows the hero view). Makes it the active display.
+     */
+    internal fun gridWindow(): AccessibilityWindowInfo? {
+        val window = cocoonWindows().firstOrNull { w -> w.root?.let(::hasGridBar) == true } ?: return null
+        activeDisplay = window.displayIdCompat()
+        return window
+    }
+
+    /** Visible clickable grid tiles of [root], left to right, top to bottom (only used to see whether a drag moved the grid). */
+    private fun gridTiles(root: AccessibilityNodeInfo): List<Pair<String, Rect>> {
+        val tiles = mutableListOf<Pair<String, Rect>>()
+        root.refresh()
+        fun collect(node: AccessibilityNodeInfo) {
+            val desc = node.contentDescription?.toString()
+            if (node.isClickable && !desc.isNullOrEmpty() && desc !in BAR_HINTS) {
+                tiles += desc to Rect().also { node.getBoundsInScreen(it) }
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(::collect)
+        }
+        collect(root)
+        return tiles.sortedWith(compareBy({ it.second.left }, { it.second.top }))
+    }
+
+    /**
+     * Drags the grid by about half a screen (slow, so it does not fling past tiles).
+     * [towardStart] drags the content right, revealing earlier tiles. Returns the
+     * visible tiles once the grid settled.
+     */
+    private suspend fun dragGrid(towardStart: Boolean): List<Pair<String, Rect>> {
+        val window = gridWindow() ?: throw FlowFailure("Cocoon's home grid is not on screen")
+        val b = Rect().also { window.getBoundsInScreen(it) }
+        val y = b.top + b.height() * GRID_DRAG_Y
+        val left = b.left + b.width() * GRID_DRAG_FROM
+        val right = b.left + b.width() * (1 - GRID_DRAG_FROM)
+        val (from, to) = if (towardStart) left to right else right to left
+        if (!swipe(from, y, to, y, GRID_DRAG_MS)) throw FlowFailure("grid drag was rejected")
+        delay(GRID_SETTLE_MS)
+        val tiles = gridWindow()?.root?.let(::gridTiles).orEmpty()
+        Log.i(TAG, "grid drag ${if (towardStart) "back" else "forward"}: ${tiles.size} tiles, " +
+            "${tiles.firstOrNull()?.let { "'${it.first}'@${it.second.left}" }} … ${tiles.lastOrNull()?.let { "'${it.first}'@${it.second.left}" }}")
+        return tiles
+    }
+
+    /**
+     * An empty grid slot that takes a touch: on the visible page, else after
+     * dragging the grid toward its end (Cocoon keeps empty slots after the last
+     * tile). Empty slots are always exposed as buttons, whatever state the rest of
+     * the grid's accessibility tree is in.
+     */
+    internal suspend fun emptyGridSlot(): AccessibilityNodeInfo? {
+        var previous: List<Pair<String, Rect>>? = null
+        repeat(MAX_GRID_PAGES) {
+            visibleGridTile(EMPTY_SLOT)?.let { return it }
+            val tiles = dragGrid(towardStart = false)
+            if (tiles == previous) return visibleGridTile(EMPTY_SLOT)
+            previous = tiles
+        }
+        return null
+    }
+
+    /**
+     * The clickable grid tile named [name] if it is on screen and wide enough to
+     * take a touch. Cocoon's grid tree is only trustworthy for clickable tiles:
+     * after it returns from another screen it often exposes stale, non-clickable
+     * images and leaves folders out entirely, so a miss here proves nothing (see
+     * [focusGridTile]).
+     */
+    internal fun visibleGridTile(name: String): AccessibilityNodeInfo? {
+        val window = gridWindow() ?: return null
+        val root = window.root?.also { it.refresh() } ?: return null
+        val tile = findNode(root) { it.isClickable && it.contentDescription?.toString() == name } ?: return null
+        val b = Rect().also { tile.getBoundsInScreen(it) }
+        return tile.takeIf { b.width() >= MIN_TILE_WIDTH_PX }
+    }
+
+    /**
+     * Name of the grid tile that has the focus, as Cocoon's hero view on the other
+     * screen shows it: the large hero image's description (platform folders, games)
+     * or the title above the subtitle ("Folder", "Pod", …) for icon tiles; null when
+     * the focus is on an empty slot. Throws when there is no hero view to read.
+     */
+    private fun heroTitle(): String? {
+        val grid = gridWindow() ?: throw FlowFailure("Cocoon's home grid is not on screen")
+        val hero = cocoonWindows().firstOrNull { it.displayIdCompat() != grid.displayIdCompat() }?.root
+            ?: throw FlowFailure("no Cocoon hero view on the other screen to read the focused tile from")
+        activeDisplay = grid.displayIdCompat()
+        hero.refresh()
+        val bounds = Rect().also { hero.getBoundsInScreen(it) }
+        var image: String? = null
+        val texts = mutableListOf<Pair<String, Rect>>()
+        fun collect(node: AccessibilityNodeInfo) {
+            val b = Rect().also { node.getBoundsInScreen(it) }
+            val desc = node.contentDescription?.toString()
+            if (image == null && !desc.isNullOrBlank() && b.width() > bounds.width() / 3) image = desc
+            val text = node.text?.toString()
+            if (!text.isNullOrBlank() && node.className?.toString() == "android.widget.TextView" && b.top > bounds.centerY()) {
+                texts += text to b
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(::collect)
+        }
+        collect(hero)
+        return texts.minByOrNull { it.second.top }?.first ?: image
+    }
+
+    /**
+     * Moves the grid's input focus onto the tile named [name] with D-pad actions,
+     * reading each focused tile's name from the hero view. Walks from the grid's
+     * first column, column by column (top to bottom), until the tile, or until
+     * [EMPTY_COLUMNS_AT_END] columns in a row hold nothing (the grid's end). False
+     * only after that walk, so callers may act on absence. The grid's display gets
+     * the input focus first (a drag on it), so the D-pad reaches it.
+     */
+    internal suspend fun focusGridTile(name: String): Boolean {
+        dragGrid(towardStart = true)
+        delay(STEP_DELAY_MS)
+        heroTitle()?.let { if (it == name) return true }
+        // To the first column: up to the top row, then left until the focus stops moving. Cocoon drops
+        // the key after a bump against the grid's edge, so wait after each phase that ends in one.
+        repeat(GRID_ROWS) { dpad(GLOBAL_ACTION_DPAD_UP) }
+        delay(EDGE_SETTLE_MS)
+        var title = heroTitle()
+        for (step in 0 until MAX_COLS) {
+            val next = move(GLOBAL_ACTION_DPAD_LEFT, title)
+            Log.d(TAG, "grid walk to start: $next")
+            if (next == title) break
+            title = next
+        }
+        delay(EDGE_SETTLE_MS)
+        var emptyColumns = 0
+        val seen = mutableSetOf<String>()
+        var current = heroTitle()
+        for (col in 0 until MAX_COLS) {
+            var columnEmpty = true
+            for (row in 0 until GRID_ROWS) {
+                if (row > 0) current = move(GLOBAL_ACTION_DPAD_DOWN, current)
+                if (current == name) {
+                    Log.i(TAG, "'$name' focused at column $col, row $row")
                     return true
                 }
-                val grid = findNode(root) { node ->
-                    node.isScrollable && node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD }
-                } ?: break
-                if (!grid.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) break
-                delay(STEP_DELAY_MS)
+                current?.let {
+                    columnEmpty = false
+                    seen += it
+                }
+                Log.d(TAG, "grid walk ($col,$row): $current")
             }
+            emptyColumns = if (columnEmpty) emptyColumns + 1 else 0
+            if (emptyColumns >= EMPTY_COLUMNS_AT_END) {
+                // Absence is acted on (a folder is taken as deleted by the user): only trust a walk that read the grid.
+                if (SETTINGS_POD !in seen) throw FlowFailure("D-pad walk did not read the grid (saw ${seen.size} tiles, no Settings pod)")
+                Log.i(TAG, "'$name' not on the grid (${seen.size} tiles in $col columns)")
+                return false
+            }
+            repeat(GRID_ROWS - 1) { current = move(GLOBAL_ACTION_DPAD_UP, current) }
+            current = move(GLOBAL_ACTION_DPAD_RIGHT, current)
         }
-        return false
+        throw FlowFailure("the home grid did not end within $MAX_COLS columns")
+    }
+
+    /**
+     * One D-pad step on the grid; returns the focused tile's name once the hero view
+     * shows a different one than [before] (its update can lag the focus by a few
+     * hundred ms), or the same name after [HERO_SETTLE_MS] (an edge, or two empty slots).
+     */
+    private suspend fun move(action: Int, before: String?): String? {
+        performGlobalAction(action)
+        val deadline = SystemClock.elapsedRealtime() + HERO_SETTLE_MS
+        delay(DPAD_DELAY_MS)
+        while (true) {
+            val now = heroTitle()
+            if (SystemClock.elapsedRealtime() >= deadline) return now
+            if (now != before) {
+                // The hero cross-fades (a subtitle alone can show for a frame): take the name once it holds.
+                delay(HERO_STABLE_MS)
+                val settled = heroTitle()
+                if (settled == now) return now
+            }
+            delay(POLL_MS)
+        }
+    }
+
+    /** Opens the focused tile's context menu (or the grid menu on an empty slot) with the grid's "Y" hint. */
+    internal suspend fun openFocusedMenu(): AccessibilityNodeInfo? {
+        val root = gridWindow()?.root ?: throw FlowFailure("Cocoon's home grid is not on screen")
+        val windowBottom = Rect().also { root.getBoundsInScreen(it) }.bottom
+        val y = findNode(root) { n ->
+            n.contentDescription?.toString() == "Y" && Rect().also { n.getBoundsInScreen(it) }.top > windowBottom - GRID_BAR_HEIGHT_PX
+        } ?: throw FlowFailure("the grid's Y hint is not on screen")
+        val b = Rect().also { y.getBoundsInScreen(it) }
+        if (!tap(b.exactCenterX(), b.exactCenterY())) throw FlowFailure("tap on the Y hint rejected")
+        return waitFor(UI_TIMEOUT_MS) { r -> if (menuOpen(r)) r else null }
+    }
+
+    private fun hasGridBar(root: AccessibilityNodeInfo): Boolean {
+        val windowBottom = Rect().also { root.getBoundsInScreen(it) }.bottom
+        return findNode(root) { n ->
+            n.contentDescription?.toString() == "Y" && Rect().also { n.getBoundsInScreen(it) }.top > windowBottom - GRID_BAR_HEIGHT_PX
+        } != null
     }
 
     private suspend fun startScan() = step("start the scan of all platforms") {
@@ -521,88 +767,55 @@ class CocoonRescanService : AccessibilityService() {
         if (!cocoonAtHome()) throw FlowFailure("could not return to the home screen")
     }
 
-    /** Best effort after a failure: close menus/dialogs/Settings until Cocoon's home screen shows. */
+    /**
+     * Best effort after a failure: closes Cocoon's prompts, keyboard, menus, folder
+     * and artwork screens and Settings on every display until only the home grid
+     * (and the hero view) remain. Uses Cocoon's own on-screen controls ("Discard",
+     * the keyboard's "X" pill, a header's "B ←" pill, the menu scrim): a global
+     * Back only reaches the display that has the input focus.
+     */
     internal suspend fun backOut() {
-        repeat(5) {
+        repeat(BACK_OUT_STEPS) {
             if (busyApp() != null) return
-            val cocoon = cocoonWindows()
+            val cocoon = cocoonWindows().mapNotNull { w -> w.root?.let { w to it } }
             if (cocoon.isEmpty()) return
-            if (!cocoonAtHome()) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
+            val target = cocoon.firstNotNullOfOrNull { (w, r) ->
+                when {
+                    findText(r, UNSAVED_TITLE) != null -> findText(r, DISCARD)
+                    findText(r, KEY_BACKSPACE) != null -> headerControl(r, "X")
+                    menuOpen(r) -> null.also {
+                        activeDisplay = w.displayIdCompat()
+                        closeContextMenu()
+                    }
+                    else -> headerControl(r, "B") ?: headerControl(r, "Back")
+                }?.let { w to it }
+            }
+            if (target != null) {
+                activeDisplay = target.first.displayIdCompat()
+                val b = Rect().also { target.second.getBoundsInScreen(it) }
+                tap(b.exactCenterX(), b.exactCenterY())
                 delay(STEP_DELAY_MS * 3)
                 return@repeat
             }
-            val menu = cocoon.firstOrNull { w -> w.root?.let { findText(it, MENU_MARKER) } != null } ?: return
-            activeDisplay = menu.displayIdCompat()
-            closeContextMenu()
-        }
-    }
-
-    // ── Settings pod search on the home grid ───────────────────────────
-
-    private suspend fun focusSettingsPod(): Boolean = focusTile(SETTINGS_POD, cachePosition = true)
-
-    /**
-     * Moves the grid focus onto the tile named [target] with D-pad global actions,
-     * reading each focused tile's name from its context menu. [cachePosition]
-     * remembers where the Settings pod was found.
-     */
-    internal suspend fun focusTile(target: String, cachePosition: Boolean = false): Boolean {
-        val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        // An unreadable tile is a failure, not proof that [target] is absent (callers act on absence).
-        val first = readFocusedName() ?: throw FlowFailure("could not read the focused tile")
-        Log.i(TAG, "focused tile: $first")
-        if (first == target) return true
-
-        var topLeft = goTopLeft()
-        val cachedRow = if (cachePosition) prefs.getInt(KEY_ROW, -1) else -1
-        val cachedCol = if (cachePosition) prefs.getInt(KEY_COL, -1) else -1
-        if (cachedRow >= 0 && cachedCol >= 0) {
-            repeat(cachedRow) { dpad(GLOBAL_ACTION_DPAD_DOWN) }
-            repeat(cachedCol) { dpad(GLOBAL_ACTION_DPAD_RIGHT) }
-            val name = readFocusedName()
-            Log.i(TAG, "cached position ($cachedRow,$cachedCol): $name")
-            if (name == target) return true
-            topLeft = goTopLeft()
-        }
-        var rowStart = topLeft ?: throw FlowFailure("could not read the first tile")
-        for (row in 0 until MAX_ROWS) {
-            var previous: String? = null
-            var name: String? = rowStart
-            var col = 0
-            while (col < MAX_COLS) {
-                if (name == null) throw FlowFailure("could not read a tile")
-                if (name == target) {
-                    if (cachePosition) prefs.edit().putInt(KEY_ROW, row).putInt(KEY_COL, col).apply()
-                    Log.i(TAG, "'$target' at ($row,$col)")
-                    return true
-                }
-                if (name == previous) break
-                previous = name
-                dpad(GLOBAL_ACTION_DPAD_RIGHT)
-                col++
-                name = readFocusedName()
+            if (cocoonAtHome()) {
+                if (cocoonWindows().none { w -> w.root?.let(::menuOpen) == true }) return
+            } else {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                delay(STEP_DELAY_MS * 3)
             }
-            dpad(GLOBAL_ACTION_DPAD_DOWN)
-            repeat(col + 1) { dpad(GLOBAL_ACTION_DPAD_LEFT) }
-            val next = readFocusedName() ?: throw FlowFailure("could not read a tile")
-            if (next == rowStart) return false
-            rowStart = next
         }
-        return false
     }
 
-    /** Moves focus to the first tile of the first row; returns its name. */
-    internal suspend fun goTopLeft(): String? {
-        repeat(MAX_ROWS) { dpad(GLOBAL_ACTION_DPAD_UP) }
-        var previous: String? = null
-        repeat(MAX_COLS / LEFT_BATCH + 1) {
-            repeat(LEFT_BATCH) { dpad(GLOBAL_ACTION_DPAD_LEFT) }
-            val name = readFocusedName() ?: return null
-            if (name == previous) return name
-            previous = name
-        }
-        return previous
+    /** A screen header's button hint ([desc] = "B", "Back", "X", …) in the top band of its window. */
+    internal fun headerControl(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? {
+        val top = Rect().also { root.getBoundsInScreen(it) }.top
+        return findNode(root) { n -> n.contentDescription?.toString() == desc && Rect().also { n.getBoundsInScreen(it) }.top < top + HEADER_BAND_PX }
+    }
+
+    /** Long-presses [tile] (opens its context menu, or the grid menu on an empty slot). */
+    internal suspend fun longPress(tile: AccessibilityNodeInfo) {
+        val b = Rect().also { tile.getBoundsInScreen(it) }
+        if (!tap(b.exactCenterX(), b.exactCenterY(), LONG_PRESS_MS)) throw FlowFailure("long press on '${tile.contentDescription}' rejected")
     }
 
     internal suspend fun dpad(action: Int) {
@@ -610,18 +823,9 @@ class CocoonRescanService : AccessibilityService() {
         delay(DPAD_DELAY_MS)
     }
 
-    /** Opens the focused tile's context menu, reads its title, closes it again. */
-    internal suspend fun readFocusedName(): String? {
-        val root = openContextMenu() ?: run { Log.w(TAG, "context menu did not open"); return null }
-        val title = contextMenuTitle(root)
-        if (title == null) Log.w(TAG, "context menu has no title")
-        closeContextMenu()
-        return title
-    }
-
     /** Name of the tile whose context menu is open in [root] (the text left of the menu entries). */
     internal fun contextMenuTitle(root: AccessibilityNodeInfo): String? {
-        val edit = findText(root, MENU_MARKER) ?: return null
+        val edit = findNode(root) { it.text?.toString() in MENU_ENTRIES } ?: return null
         val menuLeft = Rect().also { edit.getBoundsInScreen(it) }.left
         return findNode(root) { node ->
             val text = node.text?.toString()
@@ -634,22 +838,6 @@ class CocoonRescanService : AccessibilityService() {
         }?.text?.toString()
     }
 
-    internal suspend fun openContextMenu(): AccessibilityNodeInfo? {
-        val root = mainAppWindow()?.root ?: return null
-        findText(root, MENU_MARKER)?.let { return root }
-        val y = findNode(root) { it.contentDescription?.toString() == "Y" }
-            ?: run { Log.w(TAG, "home menu button (Y) not found"); return null }
-        val button = clickableAncestor(y)
-        if (button != null) {
-            button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        } else {
-            // In Cocoon's image-tile grid the Y hint has no clickable parent: touch it.
-            val b = Rect().also { y.getBoundsInScreen(it) }
-            tap(b.exactCenterX(), b.exactCenterY())
-        }
-        return waitFor(UI_TIMEOUT_MS) { r -> if (findText(r, MENU_MARKER) != null) r else null }
-    }
-
     internal suspend fun closeContextMenu() {
         val window = mainAppWindow() ?: return
         val root = window.root ?: return
@@ -660,7 +848,7 @@ class CocoonRescanService : AccessibilityService() {
         if (scrim == null || !scrim.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             performGlobalAction(GLOBAL_ACTION_BACK)
         }
-        waitFor(UI_TIMEOUT_MS) { r -> if (findText(r, MENU_MARKER) == null) true else null }
+        waitFor(UI_TIMEOUT_MS) { r -> if (!menuOpen(r)) true else null }
     }
 
     // ── Accessibility helpers ───────────────────────────────────────────
@@ -736,9 +924,16 @@ class CocoonRescanService : AccessibilityService() {
     }
 
     /** Touch at ([x], [y]) on the active display; a [durationMs] of ~1 s is a long press. */
-    internal suspend fun tap(x: Float, y: Float, durationMs: Long = TAP_MS): Boolean = suspendCancellableCoroutine { cont ->
+    internal suspend fun tap(x: Float, y: Float, durationMs: Long = TAP_MS): Boolean =
+        gesture(Path().apply { moveTo(x, y) }, durationMs)
+
+    /** A straight drag on the active display. */
+    internal suspend fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean =
+        gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, durationMs)
+
+    private suspend fun gesture(path: Path, durationMs: Long): Boolean = suspendCancellableCoroutine { cont ->
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, durationMs))
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setDisplayId(activeDisplay) }
             .build()
         val accepted = dispatchGesture(
@@ -766,27 +961,59 @@ class CocoonRescanService : AccessibilityService() {
         private const val ESDE_BACK_INTERVAL_MS = 700L
         private const val ESDE_QUIT_TIMEOUT_MS = 5_000L
         private const val ESDE_START_TIMEOUT_MS = 30_000L
-        private const val MAX_GRID_SCROLLS = 10
+        /** Grid pages walked at most when searching (each drag moves about two columns). */
+        private const val MAX_GRID_PAGES = 20
+        /** Rows of Cocoon's home grid on the Thor. */
+        private const val GRID_ROWS = 3
+        private const val MAX_COLS = 60
+        /** This many fully empty columns in a row end the D-pad walk (Cocoon keeps empty slots after the last tile). */
+        private const val EMPTY_COLUMNS_AT_END = 3
+        /** Cocoon ignores the next key for a moment after a bump against the grid's edge. */
+        private const val EDGE_SETTLE_MS = 1_200L
+        /** Longest wait for the hero view to show the newly focused tile after a D-pad step. */
+        private const val HERO_SETTLE_MS = 1_500L
+        private const val HERO_STABLE_MS = 200L
+        internal const val EMPTY_SLOT = "Empty grid slot"
+        private const val GRID_DRAG_Y = 0.42f
+        private const val GRID_DRAG_FROM = 0.15f
+        private const val GRID_DRAG_MS = 700L
+        private const val GRID_SETTLE_MS = 700L
+        /** Narrower tiles are clipped by the screen edge and may not take a touch. */
+        private const val MIN_TILE_WIDTH_PX = 200
+        /** The grid's bottom bar (X/Y hints, dock) sits in this band above the window's bottom. */
+        private const val GRID_BAR_HEIGHT_PX = 200
+        private const val LONG_PRESS_MS = 900L
+        private val BAR_HINTS = setOf("X", "Y", "Select")
         /** A stale ES-DE is restarted only this soon after it comes to the front (before the user browses). */
         private const val ESDE_FRONT_GRACE_MS = 1_500L
         private const val ESDE_FRONT_CHECK_MS = 150L
-        private const val PREFS = "cocoon_auto_import"
-        private const val KEY_ROW = "settings_pod_row"
-        private const val KEY_COL = "settings_pod_col"
 
         internal const val COCOON_HOME_TITLE = "Cocoon"
         internal const val ESDE_COMPANION_PACKAGE = "com.esde.companion"
         private const val ESDE_COMPANION_ACTIVITY = "com.esde.companion.ui.MainActivity"
+        private const val COCOON_SECOND_SCREEN_ACTIVITY = "rip.moth.cocoonshell.ExternalDisplayActivity"
         private const val COMPANION_CLOSE_WAIT_MS = 1_500L
         private const val SETTINGS_TITLE = "Settings"
         private const val SETTINGS_POD = "Settings"
         /** Present in every tile context menu (games and pods show "Launch", platform folders "Open"). */
         internal const val MENU_MARKER = "Edit"
-        internal val MENU_ENTRIES = setOf("Launch", "Open", "Edit", "Hide", "Unhide", "Favorite", "Unfavorite", "Remove")
+        /** Context-menu entries (pods offer "Top Screen"/"Bottom Screen" instead of Launch/Edit). */
+        internal val MENU_ENTRIES = setOf(
+            "Launch", "Open", "Edit", "Hide", "Unhide", "Favorite", "Unfavorite", "Remove", "Top Screen", "Bottom Screen",
+        )
 
-        private const val MAX_ROWS = 6
-        private const val MAX_COLS = 40
-        private const val LEFT_BATCH = 8
+        /** A tile context menu or the grid menu is open in [root]. */
+        internal fun menuOpen(root: AccessibilityNodeInfo): Boolean =
+            findNode(root) { n -> n.text?.toString().let { it in MENU_ENTRIES || it == GRID_MENU_MARKER } } != null
+        /** Last entry of the grid menu a long press on an empty slot opens (Apps, New, Sort, Search, Edit Grid, …). */
+        internal const val GRID_MENU_MARKER = "Edit Grid"
+        internal const val UNSAVED_TITLE = "Unsaved changes"
+        internal const val DISCARD = "Discard"
+        internal const val KEY_BACKSPACE = "backspace"
+        /** Screen headers (the "B ←" pill, the keyboard's "X") sit in this band below a window's top. */
+        private const val HEADER_BAND_PX = 200
+        private const val BACK_OUT_STEPS = 10
+
         private const val DPAD_DELAY_MS = 300L
         internal const val POLL_MS = 100L
         internal const val STEP_DELAY_MS = 300L
@@ -794,6 +1021,8 @@ class CocoonRescanService : AccessibilityService() {
         internal const val UI_TIMEOUT_MS = 4_000L
         private const val TILE_LAUNCH_WAIT_MS = 1_500L
         private const val FOREGROUND_SETTLE_MS = 2_000L
+        private const val DIALOG_BLOCKER = "a Cocoon dialog or menu is open"
+        private const val BLOCKED_RECHECK_MS = 30_000L
         private const val SCAN_TIMEOUT_MS = 5 * 60_000L
         private const val FLOW_TIMEOUT_MS = 7 * 60_000L
 

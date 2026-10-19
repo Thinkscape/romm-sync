@@ -130,7 +130,8 @@ class CocoonFolderLedger(private val store: StringStore) {
                 null
             } else {
                 needed = true
-                entry.copy(desired = null, removePending = true)
+                // Removing is new work: earlier failures of creating/updating the folder do not count.
+                entry.copy(desired = null, removePending = true, failures = 0)
             }
         }
         return needed
@@ -146,6 +147,14 @@ class CocoonFolderLedger(private val store: StringStore) {
 
     /** A UI pass for [key] failed; the folder is retried until [MAX_FAILURES]. */
     fun recordFailure(key: String) = update(key) { entry -> entry?.copy(failures = entry.failures + 1) }
+
+    /** Gives every folder its retries back (a new app build may handle what failed before). */
+    @Synchronized
+    fun resetFailures() {
+        val all = entries()
+        if (all.values.none { it.failures > 0 }) return
+        save(all.mapValues { (_, entry) -> entry.copy(failures = 0) })
+    }
 
     /** Our folder was not found on the home grid: stop managing it (the user deleted or renamed it). */
     fun markDetached(key: String) = update(key) { entry -> entry?.takeUnless { it.removePending }?.copy(detached = true) }

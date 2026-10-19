@@ -151,4 +151,25 @@ class CocoonFolderLedgerTest {
         ledger.markApplied("regular:1", applied())
         assertThat(ledger.entries().getValue("regular:1").failures).isEqualTo(0)
     }
+
+    @Test
+    fun `removal of a folder that failed to update gets fresh retries`() {
+        ledger.want("regular:1", desired)
+        ledger.markApplied("regular:1", applied())
+        ledger.want("regular:1", desired.copy(pattern = "^(?:b\\.zip)$"))
+        repeat(CocoonFolderLedger.MAX_FAILURES) { ledger.recordFailure("regular:1") }
+        assertThat(ledger.pendingWork()).isEmpty()
+
+        assertThat(ledger.forget("regular:1")).isTrue()
+        assertThat(ledger.pendingWork()).containsExactly(Work.Remove("regular:1", applied()))
+    }
+
+    @Test
+    fun `resetting failures resumes folders that hit the limit`() {
+        ledger.want("regular:1", desired)
+        repeat(CocoonFolderLedger.MAX_FAILURES) { ledger.recordFailure("regular:1") }
+        assertThat(ledger.pendingWork()).isEmpty()
+        ledger.resetFailures()
+        assertThat(ledger.pendingWork()).containsExactly(Work.Create("regular:1", desired))
+    }
 }

@@ -17,6 +17,8 @@ object CocoonCollections {
     private const val TAG = "CocoonCollections"
     private const val PREFS = "cocoon_collections"
     private const val KEY_FAILED_AT = "folder_pass_failed_at"
+    /** App install/update time the ledger last saw (`PackageInfo.lastUpdateTime`). */
+    private const val KEY_INSTALLED_AT = "ledger_installed_at"
     /** A failed folder pass is not retried within this window (each try drives Cocoon's UI). */
     private const val FAILURE_BACKOFF_MS = 10 * 60_000L
 
@@ -42,16 +44,33 @@ object CocoonCollections {
                 prefs.edit().apply { if (value == null) remove(key) else putString(key, value) }.commit()
             }
         }
-        return CocoonFolderLedger(store).also { ledgerInstance = it }
+        val ledger = CocoonFolderLedger(store)
+        // An app update may handle what failed before: give stuck folders (and the pass) their retries back.
+        val installed = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime }.getOrDefault(0L)
+        if (prefs.getLong(KEY_INSTALLED_AT, 0L) != installed) {
+            ledger.resetFailures()
+            prefs.edit().putLong(KEY_INSTALLED_AT, installed).remove(KEY_FAILED_AT).apply()
+        }
+        return ledger.also { ledgerInstance = it }
     }
 
     /** Folder work exists, the feature (the "Auto-import into Cocoon" toggle) is on, and no failure backoff runs. */
     fun isDue(context: Context): Boolean {
         val settings = (context.applicationContext as? RomMSyncApplication)?.container?.settingsDataStore ?: return false
         if (!settings.getCocoonAutoImportEnabledBlocking()) return false
+        // Load the ledger first: its first load after an app update clears the backoff.
+        val ledger = ledger(context)
         val failedAt = prefs(context).getLong(KEY_FAILED_AT, 0L)
         if (failedAt != 0L && System.currentTimeMillis() - failedAt < FAILURE_BACKOFF_MS) return false
-        return ledger(context).pendingWork().isNotEmpty()
+        return ledger.pendingWork().isNotEmpty()
+    }
+
+    /** Time until a pass held by the failure backoff may run (0 = not held), for folder work that exists. */
+    fun backoffRemainingMs(context: Context): Long {
+        val ledger = ledger(context)
+        val failedAt = prefs(context).getLong(KEY_FAILED_AT, 0L).takeIf { it != 0L } ?: return 0L
+        if (ledger.pendingWork().isEmpty()) return 0L
+        return (failedAt + FAILURE_BACKOFF_MS - System.currentTimeMillis()).coerceAtLeast(0L)
     }
 
     fun recordPassFailure(context: Context) {

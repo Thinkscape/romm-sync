@@ -64,6 +64,25 @@ object CocoonFolderDebugTrigger {
             CocoonFolderFlow(service).describeScreen().lineSequence().forEach { Log.i(TAG, "dump: $it") }
             return
         }
+        if (intent.getStringExtra("op") == "status") {
+            Log.i(TAG, "status: rescan due=${CocoonAutoImport.isDue(context)} pending=${CocoonAutoImport.isPending(context)} " +
+                "folders due=${CocoonCollections.isDue(context)} backoff=${CocoonCollections.backoffRemainingMs(context)} " +
+                "ledger=${CocoonCollections.ledger(context).entries()}")
+            CocoonRescanService.instance?.onFolderWorkPending()
+            return
+        }
+        if (intent.getStringExtra("op") == "dpad") {
+            val service = CocoonRescanService.instance ?: return
+            val action = when (intent.getStringExtra("dir")) {
+                "up" -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DPAD_UP
+                "down" -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DPAD_DOWN
+                "left" -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DPAD_LEFT
+                "right" -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DPAD_RIGHT
+                else -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DPAD_CENTER
+            }
+            Log.i(TAG, "dpad ${intent.getStringExtra("dir")}: ${service.performGlobalAction(action)}")
+            return
+        }
         val id = intent.getIntExtra("id", -1).takeIf { it >= 0 } ?: return
         val writer = when (intent.getStringExtra("launcher")) {
             "esde" -> EsdeReloader.collectionWriter(context)
@@ -90,14 +109,22 @@ object CocoonFolderDebugTrigger {
                 Log.i(TAG, "debug trigger: write ${collection.key} '${collection.name}' with ${members.size} members, cover=$cover")
                 writer.write(collection, members, cover)
             }
+            "adopt" -> {
+                // Records an existing Cocoon folder named --es name as created by this app for --es key.
+                val key = intent.getStringExtra("key") ?: collection.key
+                val ledger = CocoonCollections.ledger(context)
+                ledger.markApplied(key, CocoonFolderLedger.Applied(name = collection.name, pattern = ""))
+                Log.i(TAG, "debug trigger: adopted folder '${collection.name}' as $key")
+            }
             "reattach" -> {
                 val ledger = CocoonCollections.ledger(context)
                 ledger.entries()[collection.key]?.applied?.let { ledger.markApplied(collection.key, it) }
                 Log.i(TAG, "debug trigger: reattached ${collection.key}")
             }
             "remove" -> {
-                Log.i(TAG, "debug trigger: remove ${collection.key}")
-                writer.remove(collection.key, collection.name)
+                val key = intent.getStringExtra("key") ?: collection.key
+                Log.i(TAG, "debug trigger: remove $key")
+                writer.remove(key, collection.name)
             }
             else -> Log.w(TAG, "debug trigger: unknown op")
         }

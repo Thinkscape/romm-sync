@@ -133,6 +133,8 @@ class CollectionReconciler(
             }
             state.remove(key)
         }
+        // Cached covers of collections no longer listed (also leftovers of earlier runs).
+        pruneCovers(keep = collections.map(::coverPrefix))
 
         // 4. Launcher collections with what is installed now.
         for (collection in collections) {
@@ -194,6 +196,11 @@ class CollectionReconciler(
             log("cover of ${collection.name}: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
+        // Older versions of this collection's cover, or all of them once RomM has none
+        // (a failed fetch keeps the cache as it is).
+        if (cover != null || collection.coverUrl == null) {
+            pruneCovers(only = coverPrefix(collection), except = cover?.takeIf { collection.coverUrl != null })
+        }
         try {
             writer.write(collection, members, cover)
         } catch (e: Exception) {
@@ -205,6 +212,25 @@ class CollectionReconciler(
     }
 
     private fun log(message: String) = logger("collections: $message")
+
+    /** Cover cache file prefix of [collection] (`<kind>-<id>-`, as written by [CollectionBackend.downloadCover]). */
+    private fun coverPrefix(collection: DeviceCollection): String = "${collection.kind}-${collection.id}-"
+
+    /**
+     * Deletes cached covers: with [keep], every cover whose prefix is not in it; with
+     * [only], the covers of that prefix except [except].
+     */
+    private fun pruneCovers(keep: List<String>? = null, only: String? = null, except: File? = null) {
+        val files = coverDir.listFiles()?.filter { it.isFile } ?: return
+        for (file in files) {
+            val drop = when {
+                only != null -> file.name.startsWith(only) && file.absoluteFile != except?.absoluteFile
+                keep != null -> keep.none { file.name.startsWith(it) }
+                else -> false
+            }
+            if (drop && !file.delete()) log("cannot delete cached cover ${file.path}")
+        }
+    }
 
     companion object {
         /** Stable digest of everything a launcher write depends on ([launchers]: [LauncherCollectionWriter.signatureTag]). */

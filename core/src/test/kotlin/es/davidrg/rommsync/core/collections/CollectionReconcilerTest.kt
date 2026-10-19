@@ -23,6 +23,7 @@ class CollectionReconcilerTest {
     private val store = MemoryStore()
     private val state = MemoryState()
     private val writer = RecordingWriter()
+    private lateinit var coverDir: File
     private lateinit var backend: FakeBackend
     private lateinit var reconciler: CollectionReconciler
 
@@ -30,7 +31,8 @@ class CollectionReconcilerTest {
     fun setUp() {
         root = tmp.newFolder("roms")
         backend = FakeBackend(root, store)
-        reconciler = CollectionReconciler(backend, store, store, state, writer, tmp.newFolder("covers"), logger = {})
+        coverDir = tmp.newFolder("covers")
+        reconciler = CollectionReconciler(backend, store, store, state, writer, coverDir, logger = {})
     }
 
     private fun collection(id: Int, vararg roms: Int, name: String = "Coll $id", updatedAt: String = "t1") =
@@ -163,6 +165,36 @@ class CollectionReconcilerTest {
         assertEquals(setOf(marker(1)), store.markers(70))
     }
 
+    @Test
+    fun `cached covers are pruned on cover change, cover removal and unsubscribe`() = runTest {
+        val stale = File(coverDir, "regular-31-old.png").apply { writeText("old version") }
+        val orphan = File(coverDir, "regular-9-gone.png").apply { writeText("deleted collection") }
+        val keep31 = collection(31).copy(coverUrl = "/c/31/v1.png")
+        backend.collections = listOf(collection(3, 80).copy(coverUrl = "/c/3/v1.png"), keep31)
+        reconciler.reconcile("first")
+        val v1 = File(coverDir, "regular-3-v1.png")
+        assertTrue(v1.exists())
+        assertFalse("older version of a listed collection", stale.exists())
+        assertFalse("collection no longer listed", orphan.exists())
+
+        backend.collections = listOf(collection(3, 80, updatedAt = "t2").copy(coverUrl = "/c/3/v2.png"), keep31)
+        reconciler.reconcile("cover changed")
+        assertFalse(v1.exists())
+        assertTrue(File(coverDir, "regular-3-v2.png").exists())
+
+        backend.collections = listOf(collection(3, 80, updatedAt = "t3"), keep31)
+        reconciler.reconcile("cover removed")
+        assertTrue(coverDir.list()!!.none { it.startsWith("regular-3-") })
+
+        backend.collections = listOf(collection(3, 80, updatedAt = "t4").copy(coverUrl = "/c/3/v3.png"), keep31)
+        reconciler.reconcile("cover back")
+        assertTrue(File(coverDir, "regular-3-v3.png").exists())
+        backend.collections = listOf(keep31)
+        reconciler.reconcile("unsubscribe 3")
+
+        assertEquals(listOf("regular-31-v1.png"), coverDir.list()!!.toList())
+    }
+
     // ── Fakes ───────────────────────────────────────────────────────────
 
     private class MemoryStore : InstalledRomStore, RomProvenanceStore {
@@ -223,7 +255,12 @@ class CollectionReconcilerTest {
             return collections
         }
 
-        override suspend fun downloadCover(collection: DeviceCollection, dir: File): File? = null
+        /** Like InstallClient: `<kind>-<id>-<version>.png`, reused while the URL is unchanged. */
+        override suspend fun downloadCover(collection: DeviceCollection, dir: File): File? {
+            val url = collection.coverUrl ?: return null
+            val version = url.substringAfterLast('/').substringBefore('.')
+            return File(dir, "${collection.kind}-${collection.id}-$version.png").apply { if (!exists()) writeText(url) }
+        }
 
         fun placeExisting(romId: Int) {
             val file = place(romId)

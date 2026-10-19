@@ -54,6 +54,9 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
 
     private val ledger = CocoonCollections.ledger(s)
 
+    /** An icon step failed in this pass (its folder was still saved): hold the next pass for the backoff. */
+    private var iconFailed = false
+
     suspend fun run() {
         val work = ledger.pendingWork()
         if (work.isEmpty()) return
@@ -70,7 +73,7 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
                 withTimeout(ITEM_TIMEOUT_MS) { apply(item) }
                 Log.i(TAG, "${label(item)} ${item.key} done in ${SystemClock.elapsedRealtime() - started} ms")
             }
-            CocoonCollections.clearPassFailure(s)
+            if (iconFailed) CocoonCollections.recordPassFailure(s) else CocoonCollections.clearPassFailure(s)
         } catch (e: FlowAborted) {
             Log.i(TAG, "folder pass aborted: ${e.message}; work stays pending")
             s.allowedForeignPackage = null
@@ -96,9 +99,9 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
         CocoonCollections.recordPassFailure(s)
     }
 
-    /** True while one of Cocoon's folder dialogs (or its keyboard, or a save prompt) is open: the user is busy there. */
+    /** True while one of Cocoon's folder dialogs, menus, its keyboard or a save prompt is open: the user is busy there. */
     fun dialogOpen(): Boolean = s.cocoonWindows().any { w ->
-        w.root?.let { r -> (DIALOG_MARKERS + UNSAVED_TITLE).any { findText(r, it) != null } } == true
+        w.root?.let { r -> (DIALOG_MARKERS + UNSAVED_TITLE).any { findText(r, it) != null } || CocoonRescanService.menuOpen(r) } == true
     }
 
     /** Texts and descriptions on every display, for the failure log. */
@@ -232,34 +235,15 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
     private fun findTile(root: AccessibilityNodeInfo, name: String): AccessibilityNodeInfo? =
         findNode(root) { it.contentDescription?.toString() == name }?.let { if (it.isClickable) it else clickableAncestor(it) ?: it }
 
-    /** The empty slot least cut off by the screen edge (a clipped slot may not take a tap). */
-    private fun widestEmptySlot(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val slots = mutableListOf<AccessibilityNodeInfo>()
-        fun collect(node: AccessibilityNodeInfo) {
-            if (node.isClickable && node.contentDescription?.toString() == EMPTY_SLOT) slots += node
-            for (i in 0 until node.childCount) node.getChild(i)?.let(::collect)
-        }
-        collect(root)
-        return slots.maxByOrNull { Rect().also { b -> it.getBoundsInScreen(b) }.width() }
-    }
-
     /**
-     * Long-presses a visible empty grid slot (scrolling the grid forward when none
-     * is visible): Cocoon opens its grid menu (New, Sort, Search, Edit Grid, …).
-     * Any other menu means a tile was hit: close it and fail rather than act on it.
+     * Long-presses an empty grid slot (the visible page first, else paging toward
+     * the grid's end, where Cocoon always keeps empty slots): Cocoon opens its grid
+     * menu (New, Sort, Search, Edit Grid, …). Any other menu means a tile was hit:
+     * close it and fail rather than act on it.
      */
     private suspend fun openGridMenu() = s.step("open the grid menu on an empty slot") {
-        var slot = s.waitFor(SHORT_WAIT_MS) { widestEmptySlot(it) }
-        var scrolls = 0
-        while (slot == null && scrolls < MAX_GRID_SCROLLS) {
-            val grid = s.mainAppWindow()?.root?.let { r -> findNode(r) { it.isScrollable } }
-                ?: throw FlowFailure("no empty grid slot and no scrollable grid")
-            if (!grid.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) break
-            scrolls++
-            delay(SCROLL_SETTLE_MS)
-            slot = s.waitFor(SHORT_WAIT_MS) { widestEmptySlot(it) }
-        }
-        longPress(slot ?: throw FlowFailure("no empty grid slot for a new folder"))
+        val slot = s.emptyGridSlot() ?: throw FlowFailure("no empty grid slot for a new folder")
+        s.longPress(slot)
         val menu = s.waitFor(UI_TIMEOUT_MS) { r -> findText(r, GRID_MENU_MARKER) ?: findText(r, CocoonRescanService.MENU_MARKER) }
             ?: throw FlowFailure("long press opened no menu")
         if (menu.text?.toString() != GRID_MENU_MARKER) {
@@ -269,26 +253,25 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
     }
 
     /**
-     * Opens the context menu of the folder tile [name] → Edit; false when no such
-     * tile exists. A visible tile is long-pressed (a click would open the folder);
-     * otherwise the grid is searched with the D-pad.
+     * Opens the context menu of the folder tile [name] → Edit; false when the
+     * D-pad walk over the whole grid did not find it. A clickable tile on screen is
+     * long-pressed (a click would open the folder); otherwise the grid focus is
+     * moved onto it and the menu opened with the grid's Y hint. Either way the
+     * menu's title must be [name] before anything is touched.
      */
     private suspend fun openEditFolder(name: String): Boolean {
-        val found = s.step("open the menu of folder '$name'") {
-            val tile = s.waitFor(SHORT_WAIT_MS) { findTile(it, name) }
-            if (tile != null) {
-                longPress(tile)
-                true
-            } else {
-                if (!s.focusTile(name)) return@step false
-                s.openContextMenu() ?: throw FlowFailure("context menu of '$name' did not open")
-                true
+        val found = s.step("find folder '$name' on the grid") {
+            val tile = s.visibleGridTile(name)
+            when {
+                tile != null -> s.longPress(tile).let { true }
+                s.focusGridTile(name) -> s.openFocusedMenu().let { true }
+                else -> false
             }
         }
         if (!found) return false
         s.step("open Edit Folder of '$name'") {
             val menu = s.waitFor(UI_TIMEOUT_MS) { r -> if (findText(r, CocoonRescanService.MENU_MARKER) != null) r else null }
-                ?: throw FlowFailure("context menu did not open")
+                ?: throw FlowFailure("context menu of '$name' did not open")
             val title = s.contextMenuTitle(menu)
             if (title != name) {
                 s.closeContextMenu()
@@ -303,11 +286,6 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
             throw FlowFailure("'$EDIT_TITLE' did not open")
         }
         return true
-    }
-
-    private suspend fun longPress(node: AccessibilityNodeInfo) {
-        val b = Rect().also { node.getBoundsInScreen(it) }
-        if (!s.tap(b.exactCenterX(), b.exactCenterY(), LONG_PRESS_MS)) throw FlowFailure("long press on '${node.contentDescription}' rejected")
     }
 
     // ── Folder dialog ───────────────────────────────────────────────────
@@ -504,48 +482,124 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
         if (!waitGone(title, UI_TIMEOUT_MS)) throw FlowFailure("'$title' did not close")
     }
 
-    /** A dialog header's button hint ([desc] = "B", "Back", "X", …) in the top band of the screen. */
-    private fun headerControl(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? =
-        findNode(root) { n -> n.contentDescription?.toString() == desc && Rect().also { n.getBoundsInScreen(it) }.top < KEYBOARD_HEADER_PX }
+    /** A dialog header's button hint ([desc] = "B", "Back", "X", …) in the top band of its window. */
+    private fun headerControl(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? = s.headerControl(root, desc)
 
     // ── Folder icon ─────────────────────────────────────────────────────
 
     /**
-     * In Edit Folder: uploads [cover] as the icon and saves the dialog. The
-     * ledger gets [saved] (the dialog's other changes) as soon as Cocoon saved
-     * it, then the cover fields once Cocoon's icon file is found.
+     * In Edit Folder: uploads [cover] as the icon, then saves the dialog. The icon
+     * is optional: when its steps fail, the flow returns to Edit Folder and still
+     * saves the dialog's other changes (name, pattern); the failure is counted for
+     * the folder ([CocoonFolderLedger.recordFailure]) and retried after the pass
+     * backoff. The ledger gets [saved] as soon as Cocoon saved the dialog, then the
+     * cover fields once Cocoon's icon file is found.
      */
     private suspend fun uploadIconAndSave(key: String, saved: Applied, cover: File, coverSha1: String) {
         val iconDir = CocoonCollections.iconDir(s) ?: throw FlowFailure("Cocoon icon folder not found")
         val before = iconDir.list()?.toSet().orEmpty()
-        s.step("open Edit Folder Artwork") {
-            tapText(ARTWORK_LABEL)
-            awaitText(UPLOAD_ICON)
-        }
-        s.step("Upload Icon") {
-            s.allowedForeignPackage = DOCUMENTS_UI
-            // A touch during the artwork screen's opening animation is dropped: retry while the picker is not up.
-            for (attempt in 0 until 3) {
-                delay(SCROLL_SETTLE_MS)
-                if (docsWindow() != null) break
-                tapText(UPLOAD_ICON)
-                if (waitForDocs(PICKER_TIMEOUT_MS / 2) { it } != null) break
+        val picked = try {
+            s.step("open Edit Folder Artwork") {
+                tapText(ARTWORK_LABEL)
+                awaitText(ARTWORK_TAB)
             }
+            s.step("open the upload source") { openUploadSource() }
+            pickInDocumentsUi(cover)
+            s.step("apply the icon") { pressDialogY(ARTWORK_TAB) }
+            true
+        } catch (e: FlowFailure) {
+            Log.w(TAG, "icon for $key failed (${e.message}); saving the folder without it. Screen was:")
+            describeScreen().lineSequence().filter { it.isNotEmpty() }.forEach { Log.w(TAG, it) }
+            returnToEditFolder()
+            false
         }
-        pickInDocumentsUi(cover)
-        s.step("apply the icon") { pressDialogY(ARTWORK_TITLE) }
         saveDialog(EDIT_TITLE)
         ledger.markApplied(key, saved)
+        if (!picked) {
+            ledger.recordFailure(key)
+            iconFailed = true
+            return
+        }
         val deadline = SystemClock.elapsedRealtime() + UI_TIMEOUT_MS
         var stored: String? = null
         while (stored == null && SystemClock.elapsedRealtime() < deadline) {
             stored = iconDir.list()?.filter { it !in before && it.startsWith("folder_") }?.maxByOrNull { File(iconDir, it).lastModified() }
             if (stored == null) delay(CocoonRescanService.STEP_DELAY_MS)
         }
-        stored ?: throw FlowFailure("Cocoon stored no icon file for $key")
+        if (stored == null) {
+            Log.w(TAG, "Cocoon stored no icon file for $key")
+            ledger.recordFailure(key)
+            iconFailed = true
+            return
+        }
         Log.i(TAG, "icon for $key stored as $stored")
         saved.iconFile?.takeIf { it != stored }?.let { File(iconDir, it).delete() }
         ledger.markApplied(key, saved.copy(coverSha1 = coverSha1, iconFile = stored))
+    }
+
+    /**
+     * In the artwork screen: opens the "Upload" source, which hands over to the
+     * system file picker. Wide screens label it "Upload Icon"; on the Thor's
+     * narrow second screen the source sidebar shows only unlabelled icons (Cocoon
+     * Icons, SteamGridDB, Upload) that the accessibility tree does not expose, so
+     * the third one is touched at its place: centred between the dialog's left edge
+     * and the colour swatches, [UPLOAD_SOURCE_Y] down the dialog.
+     */
+    private suspend fun openUploadSource() {
+        s.allowedForeignPackage = DOCUMENTS_UI
+        // A touch during the artwork screen's opening animation is dropped: retry while the picker is not up.
+        for (attempt in 0 until 3) {
+            delay(SCROLL_SETTLE_MS)
+            if (docsWindow() != null) return
+            val root = s.waitFor(UI_TIMEOUT_MS) { r -> if (findText(r, ARTWORK_TAB) != null) r else null }
+                ?: throw FlowFailure("artwork screen closed")
+            val labelled = findText(root, UPLOAD_ICON)
+            if (labelled != null) {
+                tapNode(labelled)
+            } else {
+                val (x, y) = uploadSourcePoint(root) ?: throw FlowFailure("artwork screen layout not recognised")
+                if (!s.tap(x, y)) throw FlowFailure("tap on the upload source rejected")
+            }
+            if (waitForDocs(PICKER_TIMEOUT_MS / 2) { it } != null) return
+        }
+        throw FlowFailure("the upload source did not open the system file picker")
+    }
+
+    /** Where the unlabelled "Upload" source sits in the compact artwork screen, from the dialog and swatch bounds. */
+    private fun uploadSourcePoint(root: AccessibilityNodeInfo): Pair<Float, Float>? {
+        val windowBounds = Rect().also { root.getBoundsInScreen(it) }
+        val clickables = mutableListOf<Rect>()
+        fun collect(node: AccessibilityNodeInfo) {
+            if (node.isClickable) clickables += Rect().also { node.getBoundsInScreen(it) }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(::collect)
+        }
+        collect(root)
+        // The dialog card is the largest clickable smaller than the window; swatches are the small ones inside it.
+        val dialog = clickables.filter { it != windowBounds && it.width() < windowBounds.width() }.maxByOrNull { it.width() * it.height() }
+            ?: return null
+        val swatchLeft = clickables.filter { it.width() < dialog.width() / 4 && dialog.contains(it) }.minOfOrNull { it.left } ?: return null
+        if (swatchLeft - dialog.left < MIN_SIDEBAR_PX) return null
+        return (dialog.left + swatchLeft) / 2f to dialog.top + dialog.height() * UPLOAD_SOURCE_Y
+    }
+
+    /** After a failed icon step: closes the picker and the artwork screen, back to Edit Folder. */
+    private suspend fun returnToEditFolder() {
+        repeat(6) {
+            if (docsWindow() != null) {
+                s.allowedForeignPackage = DOCUMENTS_UI
+                s.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                delay(CocoonRescanService.STEP_DELAY_MS * 3)
+                return@repeat
+            }
+            s.allowedForeignPackage = null
+            val root = s.waitFor(SHORT_WAIT_MS) { r -> if (findText(r, ARTWORK_TAB) != null || findText(r, EDIT_TITLE) != null) r else null }
+                ?: throw FlowFailure("lost the Edit Folder dialog after the icon step")
+            if (findText(root, EDIT_TITLE) != null && findText(root, ARTWORK_TAB) == null) return
+            val back = headerControl(root, "B") ?: throw FlowFailure("artwork screen has no back control")
+            tapNode(back)
+            delay(CocoonRescanService.STEP_DELAY_MS * 3)
+        }
+        throw FlowFailure("could not leave the artwork screen")
     }
 
     private fun docsWindow(): AccessibilityWindowInfo? =
@@ -655,35 +709,11 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
         if (!s.tap(b.exactCenterX(), b.exactCenterY())) throw FlowFailure("tap on '${node.text ?: node.contentDescription}' rejected")
     }
 
-    /** After a failure: leave the picker, then close dialogs/menus until Cocoon's home screen shows. */
+    /** After a failure: leave the picker, then close Cocoon's dialogs and menus until its home grid shows. */
     private suspend fun backOut() {
         s.allowedForeignPackage = DOCUMENTS_UI
-        for (attempt in 0 until 10) {
-            if (docsWindow() == null) {
-                val windows = s.cocoonWindows().mapNotNull { w -> w.root?.let { w to it } }
-                // Cocoon's dialogs ignore a global Back on the Thor's second screen; use their own controls:
-                // "Discard" in the save prompt (never keep a half-applied change), the keyboard's "X"
-                // pill, else the dialog header's "B ←" pill.
-                val target = windows.firstNotNullOfOrNull { (w, r) ->
-                    val node = if (findText(r, UNSAVED_TITLE) != null) {
-                        findText(r, DISCARD)
-                    } else if (findText(r, KEY_BACKSPACE) != null) {
-                        headerControl(r, "X")
-                    } else if (DIALOG_MARKERS.any { findText(r, it) != null }) {
-                        headerControl(r, "B") ?: headerControl(r, "Back")
-                    } else {
-                        null
-                    }
-                    node?.let { w to it }
-                }
-                if (target != null) {
-                    s.activeDisplay = with(s) { target.first.displayIdCompat() }
-                    tapNode(target.second)
-                    delay(CocoonRescanService.STEP_DELAY_MS * 3)
-                    continue
-                }
-                if (windows.none { (_, r) -> DIALOG_MARKERS.any { findText(r, it) != null } }) break
-            }
+        repeat(4) {
+            if (docsWindow() == null) return@repeat
             s.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             delay(CocoonRescanService.STEP_DELAY_MS * 3)
         }
@@ -695,8 +725,7 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
         private const val TAG = "CocoonCollections"
         private const val DOCUMENTS_UI = "com.android.documentsui"
 
-        private const val EMPTY_SLOT = "Empty grid slot"
-        private const val GRID_MENU_MARKER = "Edit Grid"
+        private const val GRID_MENU_MARKER = CocoonRescanService.GRID_MENU_MARKER
         private const val CREATE_TITLE = "Create Folder"
         private const val EDIT_TITLE = "Edit Folder"
         private const val DELETE_TITLE = "Delete Folder"
@@ -707,10 +736,14 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
         private const val REGEX_TITLE = "Regex Pattern"
         private const val REGEX_PREFIX = "Regex: "
         private const val ARTWORK_LABEL = "Edit Folder Artwork"
-        private const val ARTWORK_TITLE = "Folder artwork"
+        /** Tab of the artwork screen; its "Folder artwork" title only shows on wide screens. */
+        private const val ARTWORK_TAB = "Hero"
         private const val UPLOAD_ICON = "Upload Icon"
+        /** Height fraction of the compact artwork dialog where the third source ("Upload") sits. */
+        private const val UPLOAD_SOURCE_Y = 0.536f
+        private const val MIN_SIDEBAR_PX = 120
 
-        private const val KEY_BACKSPACE = "backspace"
+        private const val KEY_BACKSPACE = CocoonRescanService.KEY_BACKSPACE
         private const val KEY_PASTE = "Paste"
         private const val KEY_CONFIRM = "check"
         private const val KEY_SHIFT = "shift"
@@ -721,24 +754,19 @@ internal class CocoonFolderFlow(private val s: CocoonRescanService) {
         private const val UI_TIMEOUT_MS = CocoonRescanService.UI_TIMEOUT_MS
         private const val SHORT_WAIT_MS = 1_000L
         private const val SCROLL_SETTLE_MS = 600L
-        private const val LONG_PRESS_MS = 900L
         /** D-pad downs from the Delete Folder dialog's initial focus to its "Delete" row. */
         private const val DELETE_ROW_INDEX = 3
         private const val KEY_DELAY_MS = 120L
         private const val PICKER_TIMEOUT_MS = 8_000L
         private const val PICKER_STEP_MS = 800L
         private const val ITEM_TIMEOUT_MS = 2 * 60_000L
-        private const val MAX_GRID_SCROLLS = 6
         private const val MAX_PICKER_SCROLLS = 8
         private const val DIALOG_HEADER_SLACK_PX = 80
         private const val MAX_DUMP_LINES = 120
-        /** Cocoon's keyboard header (its "X" cancel pill) sits above this y. */
-        private const val KEYBOARD_HEADER_PX = 200
-        private const val UNSAVED_TITLE = "Unsaved changes"
-        private const val DISCARD = "Discard"
-        /** Texts that only show while one of the folder dialogs (or Cocoon's keyboard) is open. */
+        private const val UNSAVED_TITLE = CocoonRescanService.UNSAVED_TITLE
+        /** Texts that only show while one of the folder dialogs, the artwork screen or Cocoon's keyboard is open. */
         private val DIALOG_MARKERS = listOf(
-            CREATE_TITLE, EDIT_TITLE, DELETE_TITLE, NAME_LABEL, SMART_LABEL, MANUAL_TYPE, CUSTOM_TYPE, REGEX_TITLE, ARTWORK_TITLE,
+            CREATE_TITLE, EDIT_TITLE, DELETE_TITLE, NAME_LABEL, SMART_LABEL, MANUAL_TYPE, CUSTOM_TYPE, REGEX_TITLE, ARTWORK_TAB,
             UPLOAD_ICON, KEY_BACKSPACE, "New Folder",
         )
     }
