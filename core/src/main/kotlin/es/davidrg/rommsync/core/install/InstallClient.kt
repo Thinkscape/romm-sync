@@ -69,6 +69,13 @@ interface InstalledRomStore {
 
     /** Drops the record of [romId] after its files were removed. */
     fun forgetInstalled(romId: Int) {}
+
+    /**
+     * Every recorded install. Several RomM platforms map to one folder (gb/sgb,
+     * genesis/megadrive, …), so two roms can record the same path: install and
+     * uninstall consult the other records before writing or deleting a file.
+     */
+    fun allInstalled(): List<InstalledRom> = emptyList()
 }
 
 /** Callbacks for UI/notifications. Invoked from background threads. */
@@ -112,6 +119,11 @@ interface InstallListener {
  * install (fallback: the files RomM lists for the rom, at their install
  * placement) and the folders left empty; anything else in a game folder, and
  * saves/states, are never touched. Otherwise only `.part` files are deleted.
+ *
+ * Several RomM platforms share a folder (gb/sgb, genesis/megadrive, …), so two
+ * roms can target the same path. A file another recorded install covers is
+ * never overwritten (identical → recorded for both; different → `failed`) and
+ * never deleted (uninstall keeps it and only drops its own record).
  *
  * Pushes add the [Provenance.MANUAL] marker; collection sync installs and
  * removes through [installRom]/[uninstallRom] ([CollectionBackend]).
@@ -501,7 +513,9 @@ class InstallClient(
     /**
      * Deletes the rom's files and the folders they leave empty, then cleans the
      * launcher and forgets the rom (library record + provenance). Only files
-     * inside the rom's platform folder are ever deleted.
+     * inside the rom's platform folder are ever deleted, and never a file another
+     * recorded install still covers ([sharedOwner]): that file stays, only this
+     * rom's record goes, and the launcher entry (shared too) is left alone.
      */
     private suspend fun uninstall(romId: Int, root: String?): LocalUninstallResult {
         val removal = locateRemoval(romId, root)
@@ -514,10 +528,20 @@ class InstallClient(
         if (outside != null) {
             return LocalUninstallResult(STATUS_FAILED, "refusing to delete ${outside.path}: outside ${platformDir.path}")
         }
+        val others = otherInstalls(romId)
         val deleted = mutableListOf<File>()
+        val kept = mutableListOf<File>()
         val failures = mutableListOf<File>()
         withContext(Dispatchers.IO) {
             for (file in removal.files) {
+                val owner = sharedOwner(file, others)
+                if (owner != null) {
+                    if (file.exists()) {
+                        kept += file
+                        log("uninstall rom $romId: kept ${file.path} (rom ${owner.romId} uses it)")
+                    }
+                    continue
+                }
                 if (!file.isFile) continue
                 if (file.delete()) deleted += file else failures += file
             }
@@ -527,10 +551,10 @@ class InstallClient(
             val more = if (failures.size > 1) " (+${failures.size - 1} more)" else ""
             return LocalUninstallResult(STATUS_FAILED, "cannot delete ${failures.first().path}$more", deleted)
         }
-        if (removal.primary.isDirectory) {
+        if (kept.isEmpty() && removal.primary.isDirectory) {
             log("uninstall rom $romId: kept ${removal.primary.path} (holds files that are not part of the rom)")
         }
-        if (deleted.isNotEmpty() || removal.recorded) {
+        if (kept.isEmpty() && (deleted.isNotEmpty() || removal.recorded)) {
             try {
                 gameRemover?.onRomRemoved(romId, platformDir.name, removal.files)
             } catch (e: Exception) {
@@ -538,11 +562,18 @@ class InstallClient(
             }
         }
         forget(romId)
-        return if (deleted.isEmpty()) {
+        return if (deleted.isEmpty() && kept.isEmpty()) {
             LocalUninstallResult(STATUS_NOT_INSTALLED, "files already gone")
         } else {
             LocalUninstallResult(STATUS_DONE, null, deleted)
         }
+    }
+
+    /** Recorded installs of roms other than [romId]; unreadable records stop the install/uninstall. */
+    private fun otherInstalls(romId: Int): List<InstalledRom> = try {
+        store.allInstalled().filter { it.romId != romId }
+    } catch (e: Exception) {
+        throw InstallFailure("cannot read library records: ${describe(e)}")
     }
 
     /** Recorded files first; else (or when none were recorded) the install plan from RomM's file list. */
@@ -558,7 +589,7 @@ class InstallClient(
             val files = recorded.files.ifEmpty {
                 when {
                     recorded.primary.isFile -> listOf(recorded.primary)
-                    else -> plannedFiles(romId, platformDir) ?: throw InstallFailure(
+                    else -> plannedFiles(romId, platformDir, recorded.primary.name) ?: throw InstallFailure(
                         "no file list recorded for ${recorded.primary.path} and RomM has none",
                     )
                 }
@@ -573,13 +604,60 @@ class InstallClient(
             throw e
         }
         val folder = PlatformFolders.folderFor(rom.platformSlug, rom.platformFsSlug) ?: return null
-        val plan = runCatching { planInstall(rom, emptyList(), File(root, folder)) }.getOrNull() ?: return null
-        return Removal(File(root, folder), plan.primary, plan.targets.map { it.target }, recorded = false)
+        val platformDir = File(root, folder)
+        val plan = try {
+            planFor(rom, emptyList(), platformDir, otherInstalls(romId), current = null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return null
+        }
+        return Removal(platformDir, plan.primary, plan.targets.map { it.target }, recorded = false)
     }
 
-    private suspend fun plannedFiles(romId: Int, platformDir: File): List<File>? {
+    /** RomM's file list placed into the recorded game folder [gameDirName]. */
+    private suspend fun plannedFiles(romId: Int, platformDir: File, gameDirName: String): List<File>? {
         val rom = api.getRomDetail(romId)
-        return runCatching { planInstall(rom, emptyList(), platformDir).targets.map { it.target } }.getOrNull()
+        return runCatching { planInstall(rom, emptyList(), platformDir, gameDirName).targets.map { it.target } }.getOrNull()
+    }
+
+    /** [planInstall], under a short folder for PS3 games RPCS3 would refuse ([Ps3Folders]). */
+    private suspend fun planFor(
+        rom: RomDetailDto,
+        fileIds: List<Int>,
+        platformDir: File,
+        others: List<InstalledRom>,
+        current: InstalledRom?,
+    ): InstallPlan {
+        val plan = planInstall(rom, fileIds, platformDir)
+        val dir = platformDir.absoluteFile.normalize()
+        val short = Ps3Folders.replan(
+            rom, fileIds, platformDir, plan,
+            current = current?.primary?.absoluteFile?.normalize()?.takeIf { it.parentFile == dir }?.name,
+            taken = { name -> sharedOwner(File(platformDir, name), others) != null },
+            fetch = { file -> fetchSmallFile(rom.id, file) },
+        )
+        if (short.primary != plan.primary) {
+            log("rom ${rom.id}: game folder ${plan.primary.name} is ${short.primary.name} on this device (RPCS3 needs names under 32 characters)")
+        }
+        return short
+    }
+
+    /** One rom file's bytes (PARAM.SFO), null when the download fails. */
+    private suspend fun fetchSmallFile(romId: Int, file: RomFileDto): ByteArray? = try {
+        val response = api.downloadRomFile(file.id, file.fileName)
+        if (response.isSuccessful) {
+            withContext(Dispatchers.IO) { response.body()?.use { it.bytes() } }
+        } else {
+            response.errorBody()?.close()
+            log("install rom $romId: ${file.fileName}: HTTP ${response.code()}")
+            null
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("install rom $romId: ${file.fileName}: ${describe(e)}")
+        null
     }
 
     /** Removes folders under [platformDir] that the deletion left empty, deepest first. */
@@ -682,22 +760,30 @@ class InstallClient(
         val rom = api.getRomDetail(romId)
         val folder = PlatformFolders.folderFor(rom.platformSlug, rom.platformFsSlug)
             ?: return Outcome(STATUS_FAILED, "unsupported platform ${rom.platformSlug}", emptyList())
-        val plan = planInstall(rom, fileIds, File(root, folder))
+        val others = otherInstalls(rom.id)
+        val own = try {
+            store.installed(rom.id)
+        } catch (e: Exception) {
+            null
+        }
+        val plan = planFor(rom, fileIds, File(root, folder), others, own)
         val installedFiles = plan.targets.map { it.target }
-
-        val intact = withContext(Dispatchers.IO) { plan.targets.map { isIntact(it) } }
-        if (intact.all { it }) {
-            record(rom, plan, installedFiles, marker, STATUS_ALREADY_INSTALLED)
+        val states = withContext(Dispatchers.IO) { plan.targets.map { targetState(it, others, own) } }
+        states.firstNotNullOfOrNull { it as? TargetState.Conflict }?.let { throw InstallFailure(it.reason) }
+        if (states.all { it is TargetState.Intact }) {
+            val foundOnDisk = states.any { !(it as TargetState.Intact).shared }
+            record(rom, plan, installedFiles, marker, foundOnDisk)
             return Outcome(STATUS_ALREADY_INSTALLED, null, installedFiles, rom, plan.primary, folder)
         }
 
         val total = plan.targets.sumOf { it.file.fileSizeBytes }
-        val missing = plan.targets.filterIndexed { i, _ -> !intact[i] }
-        checkFreeSpace(plan.primary, missing.sumOf { it.file.fileSizeBytes })
+        val fetch = plan.targets.zip(states).filter { (_, state) -> state !is TargetState.Intact }
+        val fetchBytes = fetch.sumOf { it.first.file.fileSizeBytes }
+        checkFreeSpace(plan.primary, fetchBytes)
 
-        var doneBytes = total - missing.sumOf { it.file.fileSizeBytes }
-        val downloaded = mutableListOf<Pair<File, File>>()
-        for (target in missing) {
+        var doneBytes = total - fetchBytes
+        val downloaded = mutableListOf<Triple<File, File, TargetState>>()
+        for ((target, state) in fetch) {
             val parent = target.target.parentFile
             if (!parent.isDirectory && !parent.mkdirs()) {
                 throw InstallFailure("cannot create folder ${parent.path}")
@@ -707,29 +793,71 @@ class InstallClient(
             val base = doneBytes
             download(target.file, part) { bytes -> listener.onInstallProgress(progressId, base + bytes, total) }
             doneBytes += target.file.fileSizeBytes
-            downloaded += part to target.target
+            downloaded += Triple(part, target.target, state)
         }
-        withContext(Dispatchers.IO) {
-            for ((part, target) in downloaded) moveIntoPlace(part, target)
+        val moves = withContext(Dispatchers.IO) {
+            // Every shared file is compared before anything moves, so a conflict leaves the folder as it was.
+            for ((part, target, state) in downloaded) {
+                if (state !is TargetState.Compare) continue
+                if (!sameContent(part, target)) throw InstallFailure(conflictReason(target, state.owner))
+                log("install rom ${rom.id}: ${target.path} is identical to the file of rom ${state.owner}; kept")
+                part.delete()
+            }
+            downloaded.filter { it.third !is TargetState.Compare }.onEach { (part, target) -> moveIntoPlace(part, target) }
         }
         parts.clear()
         listener.onInstallProgress(progressId, total, total)
-        record(rom, plan, installedFiles, marker, STATUS_DONE)
-        return Outcome(STATUS_DONE, null, installedFiles, rom, plan.primary, folder)
+        record(rom, plan, installedFiles, marker, foundOnDisk = false)
+        val status = if (moves.isEmpty()) STATUS_ALREADY_INSTALLED else STATUS_DONE
+        return Outcome(status, null, installedFiles, rom, plan.primary, folder)
     }
+
+    /** What an install does with one target: keep it, fetch it, fetch it to compare, or refuse. */
+    private sealed interface TargetState {
+        /** Already in place; [shared] when another rom's record covers it. */
+        class Intact(val shared: Boolean) : TargetState
+        object Missing : TargetState
+        /** Another rom's file is there and RomM gives no usable hash: download, then compare bytes. */
+        class Compare(val owner: Int) : TargetState
+        class Conflict(val reason: String) : TargetState
+    }
+
+    /**
+     * A target another recorded rom covers ([sharedOwner]) is never overwritten: it is
+     * kept when it matches this rom's file (size + RomM hash; without a usable hash,
+     * the downloaded bytes) and the install is refused when it differs.
+     */
+    private fun targetState(target: InstallTarget, others: List<InstalledRom>, own: InstalledRom?): TargetState {
+        val file = target.target
+        val owner = sharedOwner(file, others)
+        if (owner == null || !file.isFile) return if (isIntact(target)) TargetState.Intact(shared = false) else TargetState.Missing
+        val conflict = TargetState.Conflict(conflictReason(file, owner.romId))
+        if (target.file.fileSizeBytes > 0 && file.length() != target.file.fileSizeBytes) return conflict
+        val expected = expectedHash(target.file)
+        return when {
+            expected != null ->
+                if (hashFile(file, expected.first).equals(expected.second, ignoreCase = true)) TargetState.Intact(shared = true) else conflict
+            // Compared when this rom first recorded it.
+            own != null && sharedOwner(file, listOf(own)) != null -> TargetState.Intact(shared = true)
+            else -> TargetState.Compare(owner.romId)
+        }
+    }
+
+    private fun conflictReason(file: File, owner: Int) =
+        "${file.path} is installed for rom $owner and differs from this rom's file; not overwriting it"
 
     /**
      * Adds [marker] to the rom's provenance, then records it in the library. A
      * collection install that finds a rom already on disk without provenance
-     * (present before collection sync) also gets [Provenance.MANUAL], so
-     * collection sync never deletes it.
+     * (present before collection sync; [foundOnDisk], not a file another rom's
+     * record covers) also gets [Provenance.MANUAL], so collection sync never deletes it.
      */
-    private fun record(rom: RomDetailDto, plan: InstallPlan, files: List<File>, marker: String, status: String) {
+    private fun record(rom: RomDetailDto, plan: InstallPlan, files: List<File>, marker: String, foundOnDisk: Boolean) {
         provenance?.let { markers ->
             try {
                 val current = markers.markers(rom.id)
                 val preExisting = marker != Provenance.MANUAL && current.isEmpty() &&
-                    (status == STATUS_ALREADY_INSTALLED || store.installed(rom.id) != null)
+                    (foundOnDisk || store.installed(rom.id) != null)
                 val next = current + marker + (if (preExisting) setOf(Provenance.MANUAL) else emptySet())
                 if (next != current) markers.setMarkers(rom.id, next)
             } catch (e: Exception) {
@@ -924,6 +1052,10 @@ class InstallClient(
 
         private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
+        /** Same length and SHA-1. */
+        private fun sameContent(a: File, b: File): Boolean =
+            a.length() == b.length() && hashFile(a, "SHA-1") == hashFile(b, "SHA-1")
+
         private fun moveIntoPlace(part: File, target: File) {
             try {
                 Files.move(part.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
@@ -956,8 +1088,9 @@ data class InstallPlan(val primary: File, val targets: List<InstallTarget>)
  * the top of the rom goes straight into the platform folder; anything else goes
  * into `<fs_name>/` keeping the sub-paths RomM reports, renamed `<fs_name>.m3u/`
  * when the set contains an `.m3u` (ES-DE and Cocoon then show one entry).
+ * [gameDirName] replaces that folder name ([Ps3Folders]).
  */
-fun planInstall(rom: RomDetailDto, fileIds: List<Int>, platformDir: File): InstallPlan {
+fun planInstall(rom: RomDetailDto, fileIds: List<Int>, platformDir: File, gameDirName: String? = null): InstallPlan {
     val byId = rom.files.associateBy { it.id }
     val files = if (fileIds.isEmpty()) {
         rom.files
@@ -975,7 +1108,8 @@ fun planInstall(rom: RomDetailDto, fileIds: List<Int>, platformDir: File): Insta
 
     val baseName = safeName(rom.fsName)
     val hasM3u = files.any { it.fileName.endsWith(".m3u", ignoreCase = true) }
-    val dirName = if (hasM3u && !baseName.endsWith(".m3u", ignoreCase = true)) "$baseName.m3u" else baseName
+    val dirName = gameDirName?.let(::safeName)
+        ?: if (hasM3u && !baseName.endsWith(".m3u", ignoreCase = true)) "$baseName.m3u" else baseName
     val gameDir = File(platformDir, dirName)
     val targets = files.zip(subDirs).map { (file, sub) ->
         val dir = if (sub.isEmpty()) gameDir else File(gameDir, sub)
@@ -988,7 +1122,7 @@ fun planInstall(rom: RomDetailDto, fileIds: List<Int>, platformDir: File): Insta
 }
 
 /** Sub-path of [file] inside its game folder (`file_path` minus `<fs_path>/<fs_name>`), or "". */
-private fun gameSubPath(rom: RomDetailDto, file: RomFileDto): String {
+internal fun gameSubPath(rom: RomDetailDto, file: RomFileDto): String {
     val path = file.filePath?.replace('\\', '/')?.trim('/').orEmpty()
     if (path.isEmpty()) return ""
     val fsPath = rom.fsPath?.replace('\\', '/')?.trim('/')
@@ -1007,6 +1141,20 @@ private fun gameSubPath(rom: RomDetailDto, file: RomFileDto): String {
     }
     segments.forEach { safeName(it) }
     return segments.joinToString(File.separator)
+}
+
+/**
+ * The first of [installs] whose record covers [file]: the same path, a path inside
+ * its game folder, or — when [file] is a folder — one of its files inside [file].
+ */
+fun sharedOwner(file: File, installs: List<InstalledRom>): InstalledRom? {
+    val path = file.absoluteFile.normalize()
+    return installs.firstOrNull { rom ->
+        (rom.files + rom.primary).any { recorded ->
+            val other = recorded.absoluteFile.normalize()
+            path.startsWith(other) || other.startsWith(path)
+        }
+    }
 }
 
 private fun safeName(name: String): String {

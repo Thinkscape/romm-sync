@@ -234,6 +234,12 @@ class DesktopInstalledRomStore(
 
     override fun forgetInstalled(romId: Int) = library.removeRom(romId)
 
+    override fun allInstalled(): List<es.davidrg.rommsync.core.install.InstalledRom> =
+        library.roms().mapNotNull { entry ->
+            val primary = entry.localPath?.let(::File) ?: return@mapNotNull null
+            es.davidrg.rommsync.core.install.InstalledRom(entry.romId, entry.platformSlug, primary, library.files(entry.romId))
+        }
+
     override fun markers(romId: Int): Set<String> = library.provenance(romId)
 
     override fun setMarkers(romId: Int, markers: Set<String>) = library.setProvenance(romId, markers)

@@ -49,10 +49,13 @@ object EsdeMetadata {
     /** Launch files ES-DE should list for a plain multi-file game folder, preferred first. */
     private val LAUNCH_EXTENSIONS = listOf("m3u", "cue", "gdi", "ccd", "mds", "cdi", "chd", "iso", "rvz", "cso", "pbp")
 
+    /** Folder extensions ES-DE shows as one game (directories interpreted as files): `.m3u` sets, PS3 game folders. */
+    private val DIR_AS_FILE_EXTENSIONS = setOf("m3u", "ps3")
+
     /**
      * The entry ES-DE shows for a rom installed at [primary] (a file, or the game
      * folder of a multi-file rom) directly inside its system folder. A folder
-     * named `*.m3u`, or named exactly like a file it contains, is a directory
+     * named `*.m3u` or `*.ps3`, or named exactly like a file it contains, is a directory
      * interpreted as a file. A plain folder is browsed by ES-DE, so the entry is
      * the launch file inside it (by [LAUNCH_EXTENSIONS], else the only/largest
      * top-level file); null when that folder is not on disk or holds no file.
@@ -64,7 +67,7 @@ object EsdeMetadata {
             // A missing game folder is assumed to be a file unless it is an .m3u set.
             return EsdeGameRef("./$name", "", stemOf(name))
         }
-        val dirAsFile = name.endsWith(".m3u", ignoreCase = true) || File(primary, name).isFile
+        val dirAsFile = name.substringAfterLast('.', "").lowercase() in DIR_AS_FILE_EXTENSIONS || File(primary, name).isFile
         if (dirAsFile) return EsdeGameRef("./$name", "", stemOf(name))
         val files = primary.listFiles()?.filter { it.isFile && !it.name.startsWith(".") }.orEmpty()
         if (files.isEmpty()) return null

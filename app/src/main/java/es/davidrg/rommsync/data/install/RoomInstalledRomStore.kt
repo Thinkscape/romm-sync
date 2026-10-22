@@ -24,15 +24,23 @@ class RoomInstalledRomStore(private val romDao: RomDao) : InstalledRomStore {
 
     /**
      * The recorded install: `localPath` is the rom file, or the game folder for
-     * multi-file roms, so it alone covers every file the install wrote.
+     * multi-file roms. The table keeps no file list, so a game folder is returned
+     * without files: uninstall then deletes RomM's file list placed into that
+     * folder (never the folder as a whole, which can hold saves or foreign files).
      */
-    override fun installed(romId: Int): InstalledRom? = runBlocking { romDao.getDownloadedRom(romId) }?.let { row ->
-        val primary = File(row.localPath)
-        InstalledRom(romId = row.romId, platformSlug = row.platformSlug, primary = primary, files = listOf(primary))
-    }
+    override fun installed(romId: Int): InstalledRom? = runBlocking { romDao.getDownloadedRom(romId) }?.let(::toInstalled)
 
     override fun forgetInstalled(romId: Int) {
         runBlocking { romDao.deleteDownloadedRom(romId) }
+    }
+
+    override fun allInstalled(): List<InstalledRom> =
+        romDao.getAllDownloadedRomsBlocking().filter { it.localPath.isNotBlank() }.map(::toInstalled)
+
+    private fun toInstalled(row: DownloadedRomEntity): InstalledRom {
+        val primary = File(row.localPath)
+        val files = if (primary.isDirectory) emptyList() else listOf(primary)
+        return InstalledRom(romId = row.romId, platformSlug = row.platformSlug, primary = primary, files = files)
     }
 
     companion object {

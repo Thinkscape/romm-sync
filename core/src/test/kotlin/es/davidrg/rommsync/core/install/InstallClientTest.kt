@@ -1,5 +1,7 @@
 package es.davidrg.rommsync.core.install
 
+import es.davidrg.rommsync.core.metadata.EsdeGameRef
+import es.davidrg.rommsync.core.metadata.EsdeMetadata
 import es.davidrg.rommsync.core.metadata.EsdeTarget
 import es.davidrg.rommsync.core.remote.dto.RomDetailDto
 import kotlinx.coroutines.runBlocking
@@ -363,6 +365,8 @@ class InstallClientTest {
             override fun forgetInstalled(romId: Int) {
                 records.remove(romId)
             }
+
+            override fun allInstalled() = records.values.toList()
         },
         listener = object : InstallListener {
             override fun onUninstallFinished(requestId: String?, romId: Int, status: String, reason: String?, files: List<File>) {
@@ -478,6 +482,191 @@ class InstallClientTest {
 
         assertTrue(outside.exists())
         assertTrue(reports.single().second.contains("\"status\":\"failed\""))
+    }
+
+    // ── Files shared by platforms that map to one folder ────────────────
+
+    @Test
+    fun `identical file of two platforms is recorded for both and deleted only by the last uninstall`() = runBlocking {
+        val bytes = "alleyway".toByteArray()
+        contents[670] = bytes
+        contents[1130] = bytes
+        roms[67079] = romJson(67079, "gb", "Alleyway (World).gb", "roms/gb", listOf(fileJson(670, "Alleyway (World).gb", "roms/gb", bytes)), fsSlug = "gb")
+        roms[113776] = romJson(113776, "gb", "Alleyway (World).gb", "roms/sgb", listOf(fileJson(1130, "Alleyway (World).gb", "roms/sgb", bytes)), fsSlug = "sgb")
+        val shared = File(root, "gb/Alleyway (World).gb")
+        val client = trackingClient()
+
+        claim("i1" to (67079 to listOf(670)))
+        client.drainNow()
+        claim("i2" to (113776 to listOf(1130)))
+        client.drainNow()
+
+        assertEquals(listOf("i1" to """{"status":"done"}""", "i2" to """{"status":"already_installed"}"""), reports.toList())
+        assertEquals(1, downloadRequests().size)
+        assertEquals(shared, records[67079]!!.primary)
+        assertEquals(shared, records[113776]!!.primary)
+
+        reports.clear()
+        uninstallClaim("u2", 113776)
+        client.drainNow()
+        assertEquals(listOf("u2" to """{"status":"done"}"""), reports.toList())
+        assertArrayEquals(bytes, shared.readBytes())
+        assertEquals(null, records[113776])
+        assertTrue(records.containsKey(67079))
+        assertTrue(removed.isEmpty())
+        assertTrue(logs.toString(), logs.contains("uninstall rom 113776: kept ${shared.path} (rom 67079 uses it)"))
+
+        reports.clear()
+        uninstallClaim("u1", 67079)
+        client.drainNow()
+        assertEquals(listOf("u1" to """{"status":"done"}"""), reports.toList())
+        assertFalse(shared.exists())
+        assertEquals(listOf(67079 to "gb"), removed)
+        assertTrue(records.isEmpty())
+    }
+
+    @Test
+    fun `different file at a path another rom recorded is refused, not overwritten`() = runBlocking {
+        val mine = "genesis-dump".toByteArray()
+        val theirs = "megadrive-dump".toByteArray()
+        contents[201] = mine
+        contents[202] = theirs
+        roms[20] = romJson(20, "genesis", "Sonic.md", "roms/genesis", listOf(fileJson(201, "Sonic.md", "roms/genesis", mine)))
+        roms[21] = romJson(21, "genesis", "Sonic.md", "roms/megadrive", listOf(fileJson(202, "Sonic.md", "roms/megadrive", theirs)), fsSlug = "megadrive")
+        val target = File(root, "genesis/Sonic.md")
+        val client = trackingClient()
+
+        claim("i20" to (20 to listOf(201)))
+        client.drainNow()
+        claim("i21" to (21 to listOf(202)))
+        client.drainNow()
+
+        assertEquals("i20" to """{"status":"done"}""", reports.first())
+        val (id, body) = reports.last()
+        assertEquals("i21", id)
+        assertTrue(body, body.contains("\"status\":\"failed\""))
+        assertTrue(body, body.contains("${target.path} is installed for rom 20"))
+        assertArrayEquals(mine, target.readBytes())
+        assertEquals(1, downloadRequests().size)
+        assertEquals(null, records[21])
+        assertTrue(File(root, "genesis").listFiles().orEmpty().none { it.name.endsWith(".part") })
+    }
+
+    @Test
+    fun `shared archive without a usable hash is compared byte for byte`() = runBlocking {
+        // Composite (decompressed) sha1: unusable for the served bytes, so the download decides.
+        val composite = "ac3922" + "0".repeat(34)
+        val zip = "pacman-zip".toByteArray()
+        val other = "pacman-zjp".toByteArray()
+        contents[301] = zip
+        contents[302] = zip
+        contents[303] = other
+        roms[30] = romJson(30, "arcade", "pacman.zip", "roms/arcade", listOf(fileJson(301, "pacman.zip", "roms/arcade", zip, sha1 = composite)), fsSlug = "arcade")
+        roms[31] = romJson(31, "arcade", "pacman.zip", "roms/mame", listOf(fileJson(302, "pacman.zip", "roms/mame", zip, sha1 = composite)), fsSlug = "mame")
+        roms[32] = romJson(32, "arcade", "pacman.zip", "roms/fbneo", listOf(fileJson(303, "pacman.zip", "roms/fbneo", other, sha1 = composite)), fsSlug = "fbneo")
+        val target = File(root, "arcade/pacman.zip")
+        val client = trackingClient()
+
+        claim("i30" to (30 to listOf(301)))
+        client.drainNow()
+        claim("i31" to (31 to listOf(302)))
+        client.drainNow()
+        claim("i32" to (32 to listOf(303)))
+        client.drainNow()
+
+        assertEquals("i31" to """{"status":"already_installed"}""", reports[1])
+        assertTrue(records.containsKey(31))
+        val body = reports[2].second
+        assertTrue(body, body.contains("\"status\":\"failed\""))
+        assertTrue(body, body.contains("${target.path} is installed for rom 30"))
+        assertEquals(null, records[32])
+        assertArrayEquals(zip, target.readBytes())
+        assertTrue(File(root, "arcade").listFiles().orEmpty().none { it.name.endsWith(".part") })
+
+        // A re-push of a co-owner trusts its own record: no second compare download.
+        val before = downloadRequests().size
+        claim("i33" to (31 to listOf(302)))
+        client.drainNow()
+        assertEquals("i33" to """{"status":"already_installed"}""", reports.last())
+        assertEquals(before, downloadRequests().size)
+    }
+
+    @Test
+    fun `shared owner covers game folders both ways`() {
+        val gameDir = File(root, "psx/Game.m3u")
+        val disc = File(gameDir, "Game (Disc 1).chd")
+        val folderRecord = InstalledRom(1, "psx", gameDir, listOf(gameDir))
+        val fileRecord = InstalledRom(2, "psx", gameDir, listOf(disc))
+        assertEquals(1, sharedOwner(disc, listOf(folderRecord))?.romId)
+        assertEquals(2, sharedOwner(gameDir, listOf(fileRecord))?.romId)
+        assertEquals(null, sharedOwner(File(root, "psx/Other.chd"), listOf(folderRecord, fileRecord)))
+        assertEquals(null, sharedOwner(File(root, "psx/Game.m3u.bak"), listOf(folderRecord)))
+    }
+
+    // ── PS3 folder names (RPCS3 rejects 32+ characters) ─────────────────
+
+    private fun ps3Rom(id: Int, fsName: String, sfo: ByteArray, eboot: ByteArray): String {
+        contents[id * 10 + 1] = sfo
+        contents[id * 10 + 2] = eboot
+        return romJson(
+            id, "ps3", fsName, "roms/ps3/arcade-d",
+            listOf(
+                fileJson(id * 10 + 1, "PARAM.SFO", "roms/ps3/arcade-d/$fsName", sfo, sha1 = null),
+                fileJson(id * 10 + 2, "EBOOT.BIN", "roms/ps3/arcade-d/$fsName/USRDIR", eboot, sha1 = null),
+            ),
+        )
+    }
+
+    @Test
+    fun `long ps3 game folder installs under its title id, stays there on re-push and uninstalls from there`() = runBlocking {
+        val long = "ARKEDO_SERIES_-_01_JUMP!_(Europe).ps3"
+        val sfo = Ps3FoldersTest.sfo("CATEGORY" to "HG", "TITLE_ID" to "NPEB00598")
+        roms[16] = ps3Rom(16, long, sfo, "eboot-eu".toByteArray())
+        roms[17] = ps3Rom(17, "ARKEDO_SERIES_-_01_JUMP!_(Europe)_(Rev_1).ps3", sfo, "eboot-rev1".toByteArray())
+        roms[18] = ps3Rom(18, "Bejeweled_2_(USA).ps3", Ps3FoldersTest.sfo("TITLE_ID" to "NPUA30002"), "bejeweled".toByteArray())
+        val client = trackingClient()
+
+        claim("p16" to (16 to listOf(161, 162)), "p17" to (17 to listOf(171, 172)), "p18" to (18 to listOf(181, 182)))
+        client.drainNow()
+
+        val dir = File(root, "ps3/NPEB00598.ps3")
+        assertEquals(listOf("p16", "p17", "p18").map { it to """{"status":"done"}""" }, reports.toList())
+        assertArrayEquals(sfo, File(dir, "PARAM.SFO").readBytes())
+        assertArrayEquals("eboot-eu".toByteArray(), File(dir, "USRDIR/EBOOT.BIN").readBytes())
+        assertFalse(File(root, "ps3/$long").exists())
+        assertEquals(dir, records[16]!!.primary)
+        // Same title id, other dump: tagged with its rom id instead of clobbering rom 16.
+        assertEquals(File(root, "ps3/NPEB00598_17.ps3"), records[17]!!.primary)
+        assertArrayEquals("eboot-rev1".toByteArray(), File(root, "ps3/NPEB00598_17.ps3/USRDIR/EBOOT.BIN").readBytes())
+        // Short names are left alone.
+        assertEquals(File(root, "ps3/Bejeweled_2_(USA).ps3"), records[18]!!.primary)
+        // ES-DE shows the .ps3 folder as one game.
+        assertEquals(EsdeGameRef("./NPEB00598.ps3", "", "NPEB00598"), EsdeMetadata.gameRef(dir))
+
+        reports.clear()
+        claim("p16b" to (16 to listOf(161, 162)))
+        client.drainNow()
+        assertEquals(listOf("p16b" to """{"status":"already_installed"}"""), reports.toList())
+        assertEquals(dir, records[16]!!.primary)
+
+        reports.clear()
+        uninstallClaim("u16", 16)
+        client.drainNow()
+        assertEquals(listOf("u16" to """{"status":"done"}"""), reports.toList())
+        assertFalse(dir.exists())
+        assertTrue(File(root, "ps3/NPEB00598_17.ps3/USRDIR/EBOOT.BIN").exists())
+    }
+
+    @Test
+    fun `long ps3 folder without a readable title id falls back to a cut name with the rom id`() = runBlocking {
+        val long = "ARKEDO_SERIES_-_01_JUMP!_(Europe).ps3"
+        roms[16] = ps3Rom(16, long, "garbage".toByteArray(), "eboot".toByteArray())
+        claim("p16" to (16 to listOf(161, 162)))
+
+        trackingClient().drainNow()
+
+        assertEquals(listOf("p16" to """{"status":"done"}"""), reports.toList())
+        assertEquals(File(root, "ps3/ARKEDO_SERIES_-_01_JUMP!_16.ps3"), records[16]!!.primary)
     }
 
     companion object {

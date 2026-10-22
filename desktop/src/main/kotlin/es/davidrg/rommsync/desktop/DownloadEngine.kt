@@ -3,7 +3,9 @@ package es.davidrg.rommsync.desktop
 import es.davidrg.rommsync.core.download.PlatformFolders
 import es.davidrg.rommsync.core.download.RomFileVerification
 import es.davidrg.rommsync.core.i18n.tr
+import es.davidrg.rommsync.core.install.Ps3Folders
 import es.davidrg.rommsync.core.install.planInstall
+import es.davidrg.rommsync.core.install.sharedOwner
 import es.davidrg.rommsync.core.remote.RomMApiService
 import es.davidrg.rommsync.core.remote.dto.RomDto
 import es.davidrg.rommsync.core.remote.dto.RomFileDto
@@ -129,7 +131,14 @@ class DownloadEngine(
         onProgress: (Progress) -> Unit,
     ): Result {
         val plan = try {
-            planInstall(api.getRomDetail(rom.id), emptyList(), platformDir)
+            val detail = api.getRomDetail(rom.id)
+            val others = library?.let { DesktopInstalledRomStore(it).allInstalled() }.orEmpty().filter { it.romId != rom.id }
+            Ps3Folders.replan(
+                detail, emptyList(), platformDir, planInstall(detail, emptyList(), platformDir),
+                current = library?.rom(rom.id)?.localPath?.let(::File)?.name,
+                taken = { name -> sharedOwner(File(platformDir, name), others) != null },
+                fetch = { file -> fetchSmall(file) },
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -182,6 +191,16 @@ class DownloadEngine(
         // Downloaded by hand: collection sync must never remove it.
         library?.markManual(rom.id)
         return Result(tr("download.done_path", rom.name, plan.primary.absolutePath))
+    }
+
+    /** One small rom file in memory (PS3 `PARAM.SFO`); null when RomM does not serve it. */
+    private suspend fun fetchSmall(file: RomFileDto): ByteArray? {
+        val response = api.downloadRomFile(file.id, file.fileName)
+        if (!response.isSuccessful) {
+            response.errorBody()?.close()
+            return null
+        }
+        return response.body()?.use { it.bytes() }
     }
 
     /** sha1 (else md5) check of [local] against [file]; null when RomM reports no usable hash (none, or an archive). */
