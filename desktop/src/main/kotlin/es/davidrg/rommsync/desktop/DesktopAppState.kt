@@ -720,7 +720,7 @@ class DesktopAppState(private val scope: CoroutineScope) {
 
                     // Platforms without a launcher folder are not installable here.
                     val folder = library.platform(p.slug).romsFolderOverride
-                        ?: es.davidrg.rommsync.core.download.PlatformFolders.folderFor(p.slug)
+                        ?: es.davidrg.rommsync.core.download.PlatformFolders.folderFor(p.slug, p.fsSlug)
                         ?: continue
                     val dir = File(config.romsRoot, folder)
                     val diskFiles = mutableSetOf<String>()

@@ -47,6 +47,7 @@ class MetadataExportWorker(
         val platformId = inputData.getInt(KEY_PLATFORM_ID, -1)
         val platformSlug = inputData.getString(KEY_PLATFORM_SLUG)
             ?: return@withContext Result.failure()
+        val platformFsSlug = inputData.getString(KEY_PLATFORM_FS_SLUG)
 
         if (platformId < 0) return@withContext Result.failure()
 
@@ -64,7 +65,7 @@ class MetadataExportWorker(
             add(dataStore.getRomsRootPathBlocking())
             if (dataStore.getDualRomsPathsEnabledBlocking()) add(dataStore.getSecondaryRomsPathBlocking())
         }
-        val folder = PlatformFolders.folderFor(platformSlug)
+        val folder = PlatformFolders.folderFor(platformSlug, platformFsSlug)
         if (folder == null) {
             Log.w(TAG, "platform $platformSlug has no launcher folder; nothing to export")
             return@withContext Result.failure()
@@ -239,6 +240,7 @@ class MetadataExportWorker(
 
         const val KEY_PLATFORM_ID = "platform_id"
         const val KEY_PLATFORM_SLUG = "platform_slug"
+        const val KEY_PLATFORM_FS_SLUG = "platform_fs_slug"
         const val KEY_COVERS = "export_covers"
         const val KEY_SCREENSHOTS = "export_screenshots"
         const val KEY_VIDEOS = "export_videos"

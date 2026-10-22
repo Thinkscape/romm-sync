@@ -572,7 +572,7 @@ class InstallClient(
             if (e.code() == 404) return null
             throw e
         }
-        val folder = PlatformFolders.folderFor(rom.platformSlug) ?: return null
+        val folder = PlatformFolders.folderFor(rom.platformSlug, rom.platformFsSlug) ?: return null
         val plan = runCatching { planInstall(rom, emptyList(), File(root, folder)) }.getOrNull() ?: return null
         return Removal(File(root, folder), plan.primary, plan.targets.map { it.target }, recorded = false)
     }
@@ -680,7 +680,7 @@ class InstallClient(
         marker: String,
     ): Outcome {
         val rom = api.getRomDetail(romId)
-        val folder = PlatformFolders.folderFor(rom.platformSlug)
+        val folder = PlatformFolders.folderFor(rom.platformSlug, rom.platformFsSlug)
             ?: return Outcome(STATUS_FAILED, "unsupported platform ${rom.platformSlug}", emptyList())
         val plan = planInstall(rom, fileIds, File(root, folder))
         val installedFiles = plan.targets.map { it.target }

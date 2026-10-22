@@ -28,4 +28,6 @@ data class PlatformEntity(
      * "internal" = memoria interna, "sd" = tarjeta SD.
      */
     val downloadStorage: String? = null,
+    /** RomM `fs_slug` (library folder); with [slug] it picks the launcher folder. Null until refreshed. */
+    val fsSlug: String? = null,
 )

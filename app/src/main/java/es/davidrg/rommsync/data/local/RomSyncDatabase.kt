@@ -21,7 +21,7 @@ import es.davidrg.rommsync.data.local.entity.RomProvenanceEntity
         RomProvenanceEntity::class,
         CollectionStateEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class RomSyncDatabase : RoomDatabase() {
@@ -104,6 +104,17 @@ abstract class RomSyncDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration 8 → 9: the platform's RomM `fs_slug`, which picks the launcher
+         * folder for slugs RomM shares across library folders (`arcade`: naomi,
+         * atomiswave, …). Filled by the next platform refresh.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE platforms ADD COLUMN fsSlug TEXT DEFAULT NULL")
+            }
+        }
+
         @Volatile
         private var INSTANCE: RomSyncDatabase? = null
 
@@ -116,6 +127,7 @@ abstract class RomSyncDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+                        MIGRATION_8_9,
                     )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()

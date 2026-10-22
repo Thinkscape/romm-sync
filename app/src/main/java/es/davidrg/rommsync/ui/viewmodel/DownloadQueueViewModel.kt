@@ -46,6 +46,7 @@ class DownloadQueueViewModel(
             romName = task.romName,
             fileName = task.fileName,
             platformSlug = task.platformSlug,
+            platformFsSlug = task.platformFsSlug,
             romsRootPath = task.romsRootPath,
         )
     }

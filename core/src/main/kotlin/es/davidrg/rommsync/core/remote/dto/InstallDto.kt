@@ -43,6 +43,8 @@ data class InstallReportRequest(
 data class RomDetailDto(
     @Json(name = "id") val id: Int,
     @Json(name = "platform_slug") val platformSlug: String,
+    /** The platform's library folder (`naomi` for a NAOMI rom under the `arcade` slug); picks the launcher folder. */
+    @Json(name = "platform_fs_slug") val platformFsSlug: String? = null,
     @Json(name = "fs_name") val fsName: String,
     @Json(name = "files") val files: List<RomFileDto> = emptyList(),
     /** Library-relative folder holding the rom (e.g. `roms/gba/usb31`). */

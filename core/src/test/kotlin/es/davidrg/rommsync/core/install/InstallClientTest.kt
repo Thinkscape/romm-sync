@@ -116,8 +116,12 @@ class InstallClientTest {
         """{"id":$id,"rom_id":0,"file_name":"$name","file_path":"$path","file_size_bytes":${bytes.size},""" +
             """"sha1_hash":${sha1?.let { "\"$it\"" } ?: "null"},"md5_hash":null,"crc_hash":null,"category":"game"}"""
 
-    private fun romJson(id: Int, slug: String, fsName: String, fsPath: String, files: List<String>, cover: String? = null) =
-        """{"id":$id,"platform_slug":"$slug","fs_name":"$fsName","fs_path":"$fsPath","name":"x",""" +
+    private fun romJson(
+        id: Int, slug: String, fsName: String, fsPath: String, files: List<String>,
+        cover: String? = null, fsSlug: String? = null,
+    ) =
+        """{"id":$id,"platform_slug":"$slug","platform_fs_slug":${fsSlug?.let { "\"$it\"" } ?: "null"},""" +
+            """"fs_name":"$fsName","fs_path":"$fsPath","name":"x",""" +
             """"path_cover_large":${cover?.let { "\"$it\"" } ?: "null"},"files":[${files.joinToString(",")}]}"""
 
     private fun claim(vararg entries: Pair<String, Pair<Int, List<Int>>>) {
@@ -146,6 +150,23 @@ class InstallClientTest {
         assertTrue(logs.contains("claim: 1 pending"))
         assertEquals("/api/roms/11/files/content/Mario%20(USA).nes", downloadRequests().single().path)
         assertEquals("Bearer rmm_device", downloadRequests().single().getHeader("Authorization"))
+    }
+
+    @Test
+    fun `arcade roms land in the folder of their library fs_slug`() = runBlocking {
+        val naomi = "naomi".toByteArray()
+        val mame = "mame".toByteArray()
+        contents[12] = naomi
+        contents[13] = mame
+        roms[12] = romJson(12, "arcade", "18wheels.zip", "roms/naomi/usb31", listOf(fileJson(12, "18wheels.zip", "roms/naomi/usb31", naomi)), fsSlug = "naomi")
+        roms[13] = romJson(13, "arcade", "pacman.zip", "roms/arcade/usb31", listOf(fileJson(13, "pacman.zip", "roms/arcade/usb31", mame)), fsSlug = "arcade")
+        claim("r12" to (12 to listOf(12)), "r13" to (13 to listOf(13)))
+
+        client().drainNow()
+
+        assertArrayEquals(naomi, File(root, "naomi/18wheels.zip").readBytes())
+        assertArrayEquals(mame, File(root, "arcade/pacman.zip").readBytes())
+        assertFalse(File(root, "mame").exists())
     }
 
     @Test
@@ -433,6 +454,17 @@ class InstallClientTest {
         uninstallClaim("u8", 7)
         trackingClient().drainNow()
         assertTrue(reports.single().second.contains("\"status\":\"not_installed\""))
+    }
+
+    @Test
+    fun `uninstall fallback uses the fs_slug folder`() = runBlocking {
+        val bytes = "aw".toByteArray()
+        roms[14] = romJson(14, "arcade", "dolphin.zip", "roms/atomiswave/usb31", listOf(fileJson(141, "dolphin.zip", "roms/atomiswave/usb31", bytes)), fsSlug = "atomiswave")
+        val placed = File(root, "atomiswave/dolphin.zip").apply { parentFile.mkdirs(); writeBytes(bytes) }
+        uninstallClaim("u14", 14)
+        trackingClient().drainNow()
+        assertFalse(placed.exists())
+        assertEquals(listOf("u14" to """{"status":"done"}"""), reports.toList())
     }
 
     @Test

@@ -29,6 +29,7 @@ class MetadataExportManager(private val context: Context) {
     fun triggerExport(
         platformId: Int,
         platformSlug: String,
+        platformFsSlug: String? = null,
         covers: Boolean = true,
         screenshots: Boolean = true,
         videos: Boolean = true,
@@ -36,11 +37,13 @@ class MetadataExportManager(private val context: Context) {
         gamelist: Boolean = true,
         retroHrai: Boolean = false,
     ) {
-        val workName = "${MetadataExportWorker.WORK_NAME_PREFIX}$platformSlug"
+        // Per platform id: RomM shares a slug across platforms (`arcade`: naomi, atomiswave, …).
+        val workName = "${MetadataExportWorker.WORK_NAME_PREFIX}$platformId"
 
         val inputData = Data.Builder()
             .putInt(MetadataExportWorker.KEY_PLATFORM_ID, platformId)
             .putString(MetadataExportWorker.KEY_PLATFORM_SLUG, platformSlug)
+            .putString(MetadataExportWorker.KEY_PLATFORM_FS_SLUG, platformFsSlug)
             .putBoolean(MetadataExportWorker.KEY_COVERS, covers)
             .putBoolean(MetadataExportWorker.KEY_SCREENSHOTS, screenshots)
             .putBoolean(MetadataExportWorker.KEY_VIDEOS, videos)
@@ -65,8 +68,8 @@ class MetadataExportManager(private val context: Context) {
     /**
      * Observa el estado de exportación para una plataforma concreta.
      */
-    fun observeExportState(platformSlug: String): Flow<ExportState> {
-        val workName = "${MetadataExportWorker.WORK_NAME_PREFIX}$platformSlug"
+    fun observeExportState(platformId: Int): Flow<ExportState> {
+        val workName = "${MetadataExportWorker.WORK_NAME_PREFIX}$platformId"
         return workManager.getWorkInfosForUniqueWorkFlow(workName).map { infos ->
             val info = infos.firstOrNull()
             when (info?.state) {

@@ -40,4 +40,6 @@ data class Platform(
     val measuredAspectRatio: Float? = null,
     /** Destino de descarga por defecto (solo aplica con modo dos rutas activo). */
     val downloadStorage: PlatformDownloadStorage? = null,
+    /** RomM `fs_slug` (library folder); with [slug] it picks the launcher folder. */
+    val fsSlug: String? = null,
 )

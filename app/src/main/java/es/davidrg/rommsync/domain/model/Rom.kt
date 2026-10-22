@@ -30,6 +30,8 @@ data class Rom(
     /** ID de vídeo de YouTube del tráiler (metadatos IGDB), si existe. */
     val youtubeVideoId: String? = null,
     val igdbMetadata: IgdbMetadata? = null,
+    /** RomM `platform_fs_slug` (library folder); with [platformSlug] it picks the launcher folder. */
+    val platformFsSlug: String? = null,
 )
 
 /**

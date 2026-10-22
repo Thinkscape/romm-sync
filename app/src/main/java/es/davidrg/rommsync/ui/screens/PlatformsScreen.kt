@@ -720,7 +720,7 @@ private fun PlatformCard(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 val exportState by container.metadataExportManager
-                    .observeExportState(platform.slug).collectAsState(
+                    .observeExportState(platform.id).collectAsState(
                         initial = es.davidrg.rommsync.data.metadata.ExportState.Idle
                     )
                 val isExporting = exportState is es.davidrg.rommsync.data.metadata.ExportState.Running ||
@@ -760,6 +760,7 @@ private fun PlatformCard(
                         container.metadataExportManager.triggerExport(
                             platformId = platform.id,
                             platformSlug = platform.slug,
+                            platformFsSlug = platform.fsSlug,
                             gamelist = esdeEnabled,
                             retroHrai = retroHraiEnabled && (exportRetroHrai || !esdeEnabled),
                         )

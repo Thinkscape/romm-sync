@@ -29,6 +29,7 @@ data class RomDto(
     @Json(name = "fs_size_bytes") val fileSizeBytes: Long = 0,
     @Json(name = "platform_id") val platformId: Int,
     @Json(name = "platform_slug") val platformSlug: String? = null,
+    @Json(name = "platform_fs_slug") val platformFsSlug: String? = null,
     @Json(name = "path_cover_small") val pathCoverSmall: String? = null,
     @Json(name = "path_cover_large") val pathCoverLarge: String? = null,
     @Json(name = "url_cover") val urlCover: String? = null,

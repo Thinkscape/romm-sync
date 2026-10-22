@@ -61,6 +61,7 @@ class DownloadWorker(
         val fileName = inputData.getString(KEY_FILE_NAME) ?: return@withContext Result.failure()
         val platformId = inputData.getInt(KEY_PLATFORM_ID, -1)
         val platformSlug = inputData.getString(KEY_PLATFORM_SLUG) ?: return@withContext Result.failure()
+        val platformFsSlug = inputData.getString(KEY_PLATFORM_FS_SLUG)
 
         if (romId < 0 || platformId < 0) return@withContext Result.failure()
 
@@ -82,7 +83,7 @@ class DownloadWorker(
 
         // Map the RomM slug to the launcher folder; platforms without a mapping
         // are not installable here, so never write into <root>/<slug>.
-        val platformDir = PlatformFolders.platformDir(romsRootPath, platformSlug)
+        val platformDir = PlatformFolders.platformDir(romsRootPath, platformSlug, platformFsSlug)
             ?: return@withContext Result.failure(workDataOf(
                 KEY_ROM_NAME to romName,
                 KEY_FILE_NAME to fileName,
@@ -428,6 +429,7 @@ class DownloadWorker(
             KEY_ROM_NAME to romName,
             KEY_FILE_NAME to fileName,
             KEY_PLATFORM_SLUG to platformSlug,
+            KEY_PLATFORM_FS_SLUG to inputData.getString(KEY_PLATFORM_FS_SLUG),
             KEY_ROMS_ROOT_PATH to inputData.getString(KEY_ROMS_ROOT_PATH),
             KEY_DOWNLOADED_BYTES to downloadedBytes,
             KEY_TOTAL_BYTES to totalBytes,
@@ -751,6 +753,7 @@ class DownloadWorker(
         const val KEY_FILE_NAME = "file_name"
         const val KEY_PLATFORM_ID = "platform_id"
         const val KEY_PLATFORM_SLUG = "platform_slug"
+        const val KEY_PLATFORM_FS_SLUG = "platform_fs_slug"
         const val KEY_SERVER_URL = "server_url"
         const val KEY_ROMS_ROOT_PATH = "roms_root_path"
         const val KEY_PROGRESS = "progress"

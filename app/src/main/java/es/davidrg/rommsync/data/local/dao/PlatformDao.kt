@@ -31,9 +31,9 @@ interface PlatformDao {
      */
     @Query(
         """
-        INSERT INTO platforms (id, slug, name, romCount, visible, aspectRatio)
-        VALUES (:id, :slug, :name, :romCount, COALESCE((SELECT visible FROM platforms WHERE id = :id), 1), :aspectRatio)
-        ON CONFLICT(id) DO UPDATE SET slug = :slug, name = :name, romCount = :romCount, aspectRatio = :aspectRatio
+        INSERT INTO platforms (id, slug, name, romCount, visible, aspectRatio, fsSlug)
+        VALUES (:id, :slug, :name, :romCount, COALESCE((SELECT visible FROM platforms WHERE id = :id), 1), :aspectRatio, :fsSlug)
+        ON CONFLICT(id) DO UPDATE SET slug = :slug, name = :name, romCount = :romCount, aspectRatio = :aspectRatio, fsSlug = :fsSlug
         """
     )
     suspend fun upsertPreservingVisibility(
@@ -42,6 +42,7 @@ interface PlatformDao {
         name: String,
         romCount: Int,
         aspectRatio: String? = null,
+        fsSlug: String? = null,
     )
 
     @Query("UPDATE platforms SET visible = :visible WHERE id = :id")
@@ -61,6 +62,9 @@ interface PlatformDao {
 
     @Query("SELECT COUNT(*) FROM platforms")
     suspend fun count(): Int
+
+    @Query("SELECT * FROM platforms WHERE id = :id")
+    suspend fun getPlatform(id: Int): PlatformEntity?
 
     @Query("SELECT * FROM platforms")
     fun getAllPlatformsBlocking(): List<PlatformEntity>

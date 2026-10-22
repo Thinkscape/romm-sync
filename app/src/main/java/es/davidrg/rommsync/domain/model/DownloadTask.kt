@@ -8,6 +8,8 @@ data class DownloadTask(
     val romName: String,
     val fileName: String,
     val platformSlug: String,
+    /** RomM `platform_fs_slug`; with [platformSlug] it picks the launcher folder. */
+    val platformFsSlug: String? = null,
     /** Ruta raíz destino de esta descarga (null = la principal configurada). */
     val romsRootPath: String? = null,
     val workId: String,

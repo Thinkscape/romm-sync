@@ -49,7 +49,7 @@ class DownloadEngine(
         } else {
             // Platforms without a launcher folder are not installable here.
             val slug = rom.platformSlug.orEmpty()
-            val mapped = PlatformFolders.platformDir(romsRoot.absolutePath, slug)
+            val mapped = PlatformFolders.platformDir(romsRoot.absolutePath, slug, rom.platformFsSlug)
                 ?: return@withContext Result(tr("download.unsupported_platform", slug), failed = true)
             mapped.also { it.mkdirs() }
         }

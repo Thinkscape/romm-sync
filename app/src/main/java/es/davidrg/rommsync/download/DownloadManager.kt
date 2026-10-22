@@ -44,6 +44,7 @@ class DownloadManager(private val context: Context) {
             .putString(DownloadWorker.KEY_FILE_NAME, rom.fileName)
             .putInt(DownloadWorker.KEY_PLATFORM_ID, rom.platformId)
             .putString(DownloadWorker.KEY_PLATFORM_SLUG, rom.platformSlug)
+            .putString(DownloadWorker.KEY_PLATFORM_FS_SLUG, rom.platformFsSlug)
             .putString(DownloadWorker.KEY_SERVER_URL, serverUrl)
             // Only a single-file rom downloads as that exact file; multi-file roms arrive zipped.
             .putString(DownloadWorker.KEY_FILE_HASH, rom.files.singleOrNull()?.hash)
@@ -121,6 +122,7 @@ class DownloadManager(private val context: Context) {
         romName: String,
         fileName: String,
         platformSlug: String,
+        platformFsSlug: String? = null,
         romsRootPath: String? = null,
     ): String {
         // Cancel the old failed work first so it gets cleaned up
@@ -132,6 +134,7 @@ class DownloadManager(private val context: Context) {
             .putString(DownloadWorker.KEY_FILE_NAME, fileName)
             .putInt(DownloadWorker.KEY_PLATFORM_ID, 0)
             .putString(DownloadWorker.KEY_PLATFORM_SLUG, platformSlug)
+            .putString(DownloadWorker.KEY_PLATFORM_FS_SLUG, platformFsSlug)
             .putString(DownloadWorker.KEY_ROMS_ROOT_PATH, romsRootPath)
             .build()
 
@@ -179,6 +182,8 @@ class DownloadManager(private val context: Context) {
         val platformSlug = progressData.getString(DownloadWorker.KEY_PLATFORM_SLUG)
             ?: outputData.getString(DownloadWorker.KEY_PLATFORM_SLUG)
             ?: ""
+        val platformFsSlug = progressData.getString(DownloadWorker.KEY_PLATFORM_FS_SLUG)
+            ?: outputData.getString(DownloadWorker.KEY_PLATFORM_FS_SLUG)
         val romsRootPath = progressData.getString(DownloadWorker.KEY_ROMS_ROOT_PATH)
             ?: outputData.getString(DownloadWorker.KEY_ROMS_ROOT_PATH)
 
@@ -187,6 +192,7 @@ class DownloadManager(private val context: Context) {
             romName = romName,
             fileName = fileName,
             platformSlug = platformSlug,
+            platformFsSlug = platformFsSlug,
             romsRootPath = romsRootPath,
             workId = id.toString(),
             progress = progressData.getInt(DownloadWorker.KEY_PROGRESS, 0),
